@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 from calibre.web.feeds.news import BasicNewsRecipe, classes
 
+
 def absurl(url):
     if url.startswith('/'):
         url = 'https://www.science.org' + url
@@ -23,7 +24,7 @@ class scienceadv(BasicNewsRecipe):
     masthead_url = 'https://www.science.org/pb-assets/images/logos/sciimmunol-logo-1620488349717.svg'
     language = 'en'
     simultaneous_downloads = 1
-    browser_type = 'qt'
+    browser_type = 'webengine'
 
     extra_css = '''
         .news-article__figure__caption, .figc {font-size:small;}
@@ -93,8 +94,7 @@ class scienceadv(BasicNewsRecipe):
 
         feeds = []
 
-        div = soup.find('div', attrs={'class':'toc__body'})
-        for sec in div.findAll('section', **classes('toc__section')):
+        for sec in soup.findAll('section', **classes('toc__section')):
             name = sec.find(**classes('sidebar-article-title--decorated'))
             section = self.tag_to_string(name).strip()
             self.log(section)

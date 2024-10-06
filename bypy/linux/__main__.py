@@ -15,6 +15,7 @@ from functools import partial
 from bypy.constants import LIBDIR, OUTPUT_DIR, PREFIX, python_major_minor_version
 from bypy.constants import SRC as CALIBRE_DIR
 from bypy.freeze import extract_extension_modules, fix_pycryptodome, freeze_python, is_package_dir, path_to_freeze_dir
+from bypy.pkgs.piper import copy_piper_dir
 from bypy.utils import create_job, get_dll_path, mkdtemp, parallel_build, py_compile, run, walk
 
 j = os.path.join
@@ -105,6 +106,11 @@ def import_site_packages(srcdir, dest):
                     import_site_packages(src, dest)
         elif is_package_dir(f):
             shutil.copytree(f, j(dest, x), ignore=ignore_in_lib)
+
+
+def copy_piper(env):
+    print('Copying piper...')
+    copy_piper_dir(PREFIX, env.bin_dir)
 
 
 def copy_libs(env):
@@ -252,7 +258,7 @@ def strip_files(files, argv_max=(256 * 1024)):
 
 
 def strip_binaries(env):
-    files = {j(env.bin_dir, x) for x in os.listdir(env.bin_dir)} | {
+    files = {j(env.bin_dir, x) for x in os.listdir(env.bin_dir) if x != 'piper'} | {
         x for x in {
             j(os.path.dirname(env.bin_dir), x) for x in os.listdir(env.bin_dir)} if os.path.exists(x)}
     for x in walk(env.lib_dir):
@@ -304,6 +310,7 @@ def main():
     env = Env()
     copy_libs(env)
     copy_python(env, ext_dir)
+    copy_piper(env)
     build_launchers(env)
     if not args.skip_tests:
         run_tests(j(env.base, 'calibre-debug'), env.base)

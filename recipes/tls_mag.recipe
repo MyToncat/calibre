@@ -12,13 +12,14 @@ def re_html(y):
     if y:
         soup = BeautifulSoup(y.rstrip())
         return soup.text
+    return ''
 
 def get_id(url):
     rq = browser().open(url)
     return re.search('\?p=(\S+)>', str(rq.info())).group(1)
 
 
-class tls(BasicNewsRecipe):
+class TLS(BasicNewsRecipe):
     title = 'Times Literary Supplement'
     __author__ = 'unkn0wn'
     description = (
@@ -38,7 +39,7 @@ class tls(BasicNewsRecipe):
         .desc { font-style:italic; color:#202020; }
         .auth { font-size:small; }
         em, blockquote { color:#202020; }
-        .det { font-size:small; color:#202020; font-weight:bold; }
+        .det { font-size:small; color:#202020; }
     '''
 
     recipe_specific_options = {
@@ -59,7 +60,7 @@ class tls(BasicNewsRecipe):
         url = 'https://www.the-tls.co.uk/wp-json/tls/v2/contents-page/' + get_id(issue)
         raw = self.index_to_soup(url, raw=True)
         data = json.loads(raw)
-        self.cover_url = data['featuredimage']['full_image'] + '?w600'
+        self.cover_url = data['featuredimage']['full_image'].split('?')[0] + '?w=600'
         self.timefmt = ' [' + data['issuedateline']['issuedate'] + ']'
         if data['issuedateline']['issuenumber']:
             self.description = 'Issue ' + data['issuedateline']['issuenumber']
@@ -92,17 +93,20 @@ class tls(BasicNewsRecipe):
         self.log('              ', title, '\n\t', desc, '\n\t', url)
         return ({ 'title': title, 'description': desc, 'url': url })
 
-    def print_version(self, url):
-        return 'https://www.the-tls.co.uk/wp-json/tls/v2/single-article/' + get_id(url)
+    def preprocess_html(self, soup):
+        for img in soup.findAll('img', attrs={'src':True}):
+            img['src'] = img['src'].split('?')[0] + '?w=600'
+        return soup
 
     def preprocess_raw_html(self, raw, *a):
-        data = json.loads(raw)
+        pg = re.search(r'var tlsPageObject = ({.+)', raw).group(1)
+        data = json.JSONDecoder().raw_decode(pg)[0]
         if 'articleIntroPrimary' in data:
             prim = data['articleIntroPrimary']
             title = '<h1>' + prim['headline'] + '</h1>\n'
             desc = '<p class="desc">' + prim['standfirst'] + '</p>\n'
 
-            auth = lede = ''
+            bks = auth = lede = ''
 
             label = '<div class="label">{}</div>\n'
             l = prim['label']
@@ -116,29 +120,29 @@ class tls(BasicNewsRecipe):
             if prim['byline']['text']:
                 auth = '<p class="auth"><a href="{}">'.format(prim['byline']['link']) + prim['byline']['text'] + '</a></p>\n'
 
-        else:
-            prim = title = desc = label = auth = lede = ''
-
-        bks = ''
-        if data['bookdetails']:
-            bks += '<br>'
-            for a in data['bookdetails']:
-                for x, y in a.items():
-                    if isinstance(y, str):
-                        if x == 'imageurl':
-                            bks += '<img src="{}">'.format(y)
-                        elif y:
-                            bks += '<div class="det">' + y + '</div>\n'
+            if 'bookdetails' in prim and prim['bookdetails']:
                 bks += '<br>'
+                for a in prim['bookdetails']:
+                    for x, y in a.items():
+                        if isinstance(y, str):
+                            if x == 'imageurl':
+                                bks += '<img src="{}">'.format(y)
+                            elif y:
+                                bks += '<div class="det">' + y + '</div>\n'
+                    bks += '<br>'
+        else:
+            prim = title = desc = label = auth = lede = bks = ''
 
-        if 'leadimage' in data:
-            if 'full_image' in data['leadimage'] and data['leadimage']['full_image']:
+        if 'article_data_leadimage' in data:
+            i = data['article_data_leadimage']
+            if 'full_image' in i and i['full_image']:
                 lede = '<br><img src="{}"><div class="figc">{}</div>'.format(
-                    data['leadimage']['full_image'] + '?w600', data['leadimage']['imagecaption'] + ' <i>' \
-                        + data['leadimage']['imagecredit'] + '</i>'
+                    i['full_image'] + '?w600', i['imagecaption'] + ' <i>' \
+                        + i['imagecredit'] + '</i>'
                 )
-
-        body = data['content']
+        cont = self.index_to_soup('https://www.the-tls.co.uk/wp-json/wp/v2/tls_articles/' + data['ID'], raw=True)
+        c_data = json.loads(cont)
+        body = c_data['content']['rendered']
 
         html = '<html><body><div>' \
                     + label + title + desc + auth + lede + bks + body + \
