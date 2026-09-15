@@ -10,6 +10,7 @@ from itertools import chain
 from qt.core import (
     QAbstractItemView,
     QColor,
+    QComboBox,
     QDialog,
     QDialogButtonBox,
     QFont,
@@ -48,12 +49,12 @@ from calibre.ebooks.epub.cfi.parse import cfi_sort_key
 from calibre.gui2 import error_dialog, is_dark_theme, safe_open_url
 from calibre.gui2.dialogs.confirm_delete import confirm
 from calibre.gui2.gestures import GestureManager
-from calibre.gui2.library.annotations import ChapterGroup, Details, render_notes
+from calibre.gui2.library.annotations import ChapterGroup, Details, render_notes, render_timestamp
 from calibre.gui2.library.annotations import Export as ExportBase
 from calibre.gui2.viewer import get_boss, link_prefix_for_location_links
-from calibre.gui2.viewer.config import vprefs
+from calibre.gui2.viewer.config import get_session_pref, vprefs
 from calibre.gui2.viewer.search import SearchInput
-from calibre.gui2.viewer.shortcuts import get_shortcut_for, index_to_key_sequence
+from calibre.gui2.viewer.shortcuts import get_shortcut_for
 from calibre.gui2.widgets2 import Dialog
 from calibre.utils.localization import _, ngettext
 from calibre_extensions.progress_indicator import set_no_activate_on_click
@@ -86,8 +87,62 @@ def compute_style_key(style):
     return tuple((k, style[k]) for k in sorted(style))
 
 
-def decoration_for_style(palette, style, icon_size, device_pixel_ratio, is_dark):
-    style_key = (is_dark, icon_size, device_pixel_ratio, compute_style_key(style))
+def custom_highlight_styles():
+    c = get_session_pref('custom_highlight_styles', [], '')
+    ans = {}
+    for s in c:
+        s = s.copy()
+        s['type'] = 'custom'
+        ans[f'custom-{s["friendly_name"]}'] = s
+    return ans
+
+
+@lru_cache(2)
+def builtin_highlight_styles():
+    ans = {}
+    for which in builtin_colors_light:
+        ans[f'color-{which}'] = {'kind': 'color', 'which': which, 'type': 'builtin'}
+    for which in builtin_decorations:
+        ans[f'decoration-{which}'] = {'kind': 'decoration', 'which': which, 'type': 'builtin'}
+    return ans
+
+
+class HighlightColorCombo(QComboBox):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        is_dark = is_dark_theme()
+        sz = self.iconSize().width()
+        dpr = self.devicePixelRatioF()
+        self.default_style_name = ''
+        for name, style in custom_highlight_styles().items():
+            self.addItem(QIcon(decoration_for_style(self.palette(), style, sz, dpr, is_dark, as_pixmap_only=True)), '', name)
+        for name, style in builtin_highlight_styles().items():
+            self.default_style_name = self.default_style_name or name
+            self.addItem(QIcon(decoration_for_style(self.palette(), style, sz, dpr, is_dark, as_pixmap_only=True)), '', name)
+        self.setCurrentIndex(self.findData(self.default_style_name))
+
+    @property
+    def highlight_style_name(self) -> str:
+        return self.currentData()
+
+    @highlight_style_name.setter
+    def highlight_style_name(self, val):
+        idx = self.findData(val)
+        if idx > -1:
+            self.setCurrentIndex(idx)
+
+
+def style_definition_for_name(name: str) -> dict[str, object]:
+    bs = builtin_highlight_styles()
+    if ans := bs.get(name):
+        return ans
+    if ans := custom_highlight_styles().get(name):
+        return ans
+    return next(iter(bs.values()))
+
+
+def decoration_for_style(palette, style, icon_size, device_pixel_ratio, is_dark, as_pixmap_only=False):
+    style_key = (is_dark, icon_size, device_pixel_ratio, compute_style_key(style), as_pixmap_only)
     sentinel = object()
     ans = decoration_cache.get(style_key, sentinel)
     if ans is not sentinel:
@@ -110,7 +165,7 @@ def decoration_for_style(palette, style, icon_size, device_pixel_ratio, is_dark)
             q = builtin_decorations.get(which)
             if q is not None:
                 style = q
-        sz = int(math.ceil(icon_size * device_pixel_ratio))
+        sz = math.ceil(icon_size * device_pixel_ratio)
         canvas = QImage(sz, sz, QImage.Format.Format_ARGB32)
         canvas.fill(Qt.GlobalColor.transparent)
         canvas.setDevicePixelRatio(device_pixel_ratio)
@@ -119,14 +174,17 @@ def decoration_for_style(palette, style, icon_size, device_pixel_ratio, is_dark)
         p.setPen(palette.color(QPalette.ColorRole.WindowText))
         irect = QRect(0, 0, icon_size, icon_size)
         adjust = -2
-        text_rect = p.drawText(irect.adjusted(0, adjust, 0, adjust), Qt.AlignmentFlag.AlignHCenter| Qt.AlignmentFlag.AlignTop, 'a')
+        text_rect = p.drawText(irect.adjusted(0, adjust, 0, adjust), Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop, 'a')
         p.drawRect(irect)
         fm = p.fontMetrics()
         pen = p.pen()
         if 'text-decoration-color' in style:
             pen.setColor(QColor(style['text-decoration-color']))
         lstyle = style.get('text-decoration-style') or 'solid'
-        q = {'dotted': Qt.PenStyle.DotLine, 'dashed': Qt.PenStyle.DashLine, }.get(lstyle)
+        q = {
+            'dotted': Qt.PenStyle.DotLine,
+            'dashed': Qt.PenStyle.DashLine,
+        }.get(lstyle)
         if q is not None:
             pen.setStyle(q)
         lw = fm.lineWidth()
@@ -134,6 +192,7 @@ def decoration_for_style(palette, style, icon_size, device_pixel_ratio, is_dark)
             lw * 2
         pen.setWidth(fm.lineWidth())
         q = style.get('text-decoration-line') or 'underline'
+        assert text_rect is not None
         pos = text_rect.bottom()
         height = irect.bottom() - pos
         if q == 'overline':
@@ -149,17 +208,25 @@ def decoration_for_style(palette, style, icon_size, device_pixel_ratio, is_dark)
         ans = QPixmap.fromImage(canvas)
     elif 'background-color' in style:
         ans = QColor(style['background-color'])
+    if as_pixmap_only and isinstance(ans, QColor):
+        sz = math.ceil(icon_size * device_pixel_ratio)
+        canvas = QImage(sz, sz, QImage.Format.Format_ARGB32)
+        canvas.fill(ans)
+        canvas.setDevicePixelRatio(device_pixel_ratio)
+        ans = QPixmap.fromImage(canvas)
     decoration_cache[style_key] = ans
     return ans
 
 
 class SwatchList(QListWidget):
-
     def __init__(self, all_styles, selected_styles, parent=None):
         super().__init__(parent)
         self.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
         self.setViewMode(QListView.ViewMode.IconMode)
-        icon_size = parent.style().pixelMetric(QStyle.PixelMetric.PM_IconViewIconSize, None, self)
+        assert parent is not None
+        parent_style = parent.style()
+        assert parent_style is not None
+        icon_size = parent_style.pixelMetric(QStyle.PixelMetric.PM_IconViewIconSize, None, self)
         self.setIconSize(QSize(icon_size, icon_size))
         self.setSpacing(20)
         dpr = self.devicePixelRatioF()
@@ -184,20 +251,24 @@ class SwatchList(QListWidget):
     def selected_styles(self):
         for i in range(self.count()):
             item = self.item(i)
+            assert item is not None
             if item.checkState() == Qt.CheckState.Checked:
                 yield item.data(Qt.ItemDataRole.UserRole + 1)
 
     def select_all(self):
         for i in range(self.count()):
-            self.item(i).setCheckState(Qt.CheckState.Checked)
+            item = self.item(i)
+            assert item is not None
+            item.setCheckState(Qt.CheckState.Checked)
 
     def select_none(self):
         for i in range(self.count()):
-            self.item(i).setCheckState(Qt.CheckState.Unchecked)
+            item = self.item(i)
+            assert item is not None
+            item.setCheckState(Qt.CheckState.Unchecked)
 
 
 class FilterDialog(Dialog):
-
     def __init__(self, all_styles, show_only_styles, parent=None):
         self.all_styles, self.show_only_styles = all_styles, show_only_styles
         super().__init__(_('Filter shown highlights'), 'filter-highlights', parent=parent)
@@ -214,8 +285,12 @@ class FilterDialog(Dialog):
         self.swatches = s = SwatchList(self.all_styles, self.show_only_styles, self)
         l.addWidget(s)
         l.addWidget(self.bb)
-        self.bb.addButton(_('Select &all'), QDialogButtonBox.ButtonRole.ActionRole).clicked.connect(s.select_all)
-        self.bb.addButton(_('Select &none'), QDialogButtonBox.ButtonRole.ActionRole).clicked.connect(s.select_none)
+        btn_all = self.bb.addButton(_('Select &all'), QDialogButtonBox.ButtonRole.ActionRole)
+        assert btn_all is not None
+        btn_all.clicked.connect(s.select_all)
+        btn_none = self.bb.addButton(_('Select &none'), QDialogButtonBox.ButtonRole.ActionRole)
+        assert btn_none is not None
+        btn_none.clicked.connect(s.select_none)
 
     @property
     def selected_styles(self):
@@ -234,30 +309,75 @@ class Export(ExportBase):
 
     def exported_data(self):
         fmt = self.export_format.currentData()
-        if fmt == 'calibre_highlights':
-            return json.dumps({
-                'version': 1,
-                'type': 'calibre_highlights',
-                'highlights': self.annotations,
-            }, ensure_ascii=False, sort_keys=True, indent=2)
-        lines = []
-        as_markdown = fmt == 'md'
         link_prefix = link_prefix_for_location_links()
+
+        def _generate_markdown():
+            lines = []
+            root = ChapterGroup()
+            for a in self.annotations:
+                root.add_annot(a)
+            root.render_as_text(lines, True, link_prefix)
+            return '\n'.join(lines).strip()
+
+        if fmt == 'calibre_highlights':
+            return json.dumps(
+                {
+                    'version': 1,
+                    'type': 'calibre_highlights',
+                    'highlights': self.annotations,
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+                indent=2,
+            )
+
+        if fmt == 'html':
+            root = ChapterGroup()
+            for a in self.annotations:
+                root.add_annot(a)
+            return root.render_as_html(link_prefix)
+
+        if fmt == 'md':
+            return _generate_markdown()
+
+        # plain text
+        lines = []
         root = ChapterGroup()
         for a in self.annotations:
             root.add_annot(a)
-        root.render_as_text(lines, as_markdown, link_prefix)
+        root.render_as_text(lines, False, link_prefix)
         return '\n'.join(lines).strip()
 
 
-class Highlights(QTreeWidget):
+class ChangeStyleDialog(Dialog):
+    def __init__(self, parent=None):
+        Dialog.__init__(self, name='change-style-highlights', title=_('Change highlight style'), parent=parent)
 
+    def sizeHint(self):
+        return QSize(300, 120)
+
+    def setup_ui(self):
+        self.setWindowIcon(QIcon.ic('format-text-color.png'))
+        l = QVBoxLayout(self)
+        la = QLabel(_('Choose new highlight style:'))
+        l.addWidget(la)
+        self.style_combo = HighlightColorCombo(self)
+        l.addWidget(self.style_combo)
+        l.addWidget(self.bb)
+
+    @property
+    def style_name(self) -> str:
+        return self.style_combo.highlight_style_name
+
+
+class Highlights(QTreeWidget):
     jump_to_highlight = pyqtSignal(object)
     current_highlight_changed = pyqtSignal(object)
     delete_requested = pyqtSignal()
     edit_requested = pyqtSignal()
     edit_notes_requested = pyqtSignal()
     export_selected_requested = pyqtSignal()
+    change_style_requested = pyqtSignal()
 
     def __init__(self, parent=None):
         QTreeWidget.__init__(self, parent)
@@ -277,26 +397,37 @@ class Highlights(QTreeWidget):
         self.gesture_manager = GestureManager(self)
         self.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
 
-    def viewportEvent(self, ev):
+    def viewportEvent(self, event):
         if hasattr(self, 'gesture_manager'):
-            ret = self.gesture_manager.handle_event(ev)
+            ret = self.gesture_manager.handle_event(event)
             if ret is not None:
                 return ret
-        return super().viewportEvent(ev)
+        return super().viewportEvent(event)
 
     def show_context_menu(self, point):
         index = self.indexAt(point)
         h = index.data(highlight_role)
+        selected = list(self.selected_highlights)
+        n = len(selected)
         self.context_menu = m = QMenu(self)
-        if h is not None:
-            m.addAction(QIcon.ic('edit_input.png'), _('Modify this highlight'), self.edit_requested.emit)
-            m.addAction(QIcon.ic('modified.png'), _('Edit notes for this highlight'), self.edit_notes_requested.emit)
-            m.addAction(QIcon.ic('trash.png'), ngettext(
-                'Delete this highlight', 'Delete selected highlights', len(self.selectedItems())
-            ), self.delete_requested.emit)
+        if h is not None or n:
+            if n <= 1:
+                m.addAction(QIcon.ic('edit_input.png'), _('Modify this highlight'), self.edit_requested.emit)
+                m.addAction(QIcon.ic('modified.png'), _('Edit notes for this highlight'), self.edit_notes_requested.emit)
+            m.addAction(
+                QIcon.ic('format-text-color.png'),
+                ngettext('Change style of this highlight…', 'Change style of {} highlights…', n).format(n),
+                self.change_style_requested.emit,
+            )
+            m.addAction(
+                QIcon.ic('trash.png'),
+                ngettext('Delete this highlight', 'Delete selected highlights', n),
+                self.delete_requested.emit,
+            )
         m.addSeparator()
-        if tuple(self.selected_highlights):
+        if n:
             m.addAction(QIcon.ic('save.png'), _('Export selected highlights'), self.export_selected_requested.emit)
+        m.addAction(QIcon.ic('edit-select-all.png'), _('Select all highlights'), self.selectAll)
         m.addAction(QIcon.ic('plus.png'), _('Expand all'), self.expandAll)
         m.addAction(QIcon.ic('minus.png'), _('Collapse all'), self.collapseAll)
         self.context_menu.popup(self.mapToGlobal(point))
@@ -307,11 +438,14 @@ class Highlights(QTreeWidget):
 
     def load(self, highlights, preserve_state=False):
         s = self.style()
+        assert s is not None
         expanded_chapters = set()
         if preserve_state:
             root = self.invisibleRootItem()
+            assert root is not None
             for i in range(root.childCount()):
                 chapter = root.child(i)
+                assert chapter is not None
                 if chapter.isExpanded():
                     expanded_chapters.add(chapter.data(0, section_role))
         icon_size = s.pixelMetric(QStyle.PixelMetric.PM_SmallIconSize, None, self)
@@ -336,17 +470,24 @@ class Highlights(QTreeWidget):
 
         for h in self.sorted_highlights(highlights):
             tfam = tuple(h.get('toc_family_titles') or ())
+            spine_index = h.get('spine_index', -1)
             if tfam:
                 tsec = tfam[0]
                 lsec = tfam[-1]
-                key = tfam
+                key = (spine_index,) + tfam
             else:
                 tsec = h.get('top_level_section_title')
                 lsec = h.get('lowest_level_section_title')
-                key = (tsec or '', lsec or '')
+                key = (spine_index, tsec or '', lsec or '')
             short_title = lsec or tsec or _('Unknown')
             section = {
-                'title': short_title, 'tfam': tfam, 'tsec': tsec, 'lsec': lsec, 'items': [], 'tooltip': tooltip_for(tfam), 'key': key,
+                'title': short_title,
+                'tfam': tfam,
+                'tsec': tsec,
+                'lsec': lsec,
+                'items': [],
+                'tooltip': tooltip_for(tfam),
+                'key': key,
             }
             smap.setdefault(key, section)['items'].append(h)
             repeated_short_titles[short_title].add(key)
@@ -356,7 +497,7 @@ class Highlights(QTreeWidget):
                 for key in keys:
                     section = smap[key]
                     if section['tfam']:
-                        section['title'] = ' ➤ '.join(tfam)
+                        section['title'] = ' ➤ '.join(section['tfam'])
                     elif section['tsec'] and section['lsec']:
                         section['title'] = ' ➤ '.join((section['tsec'], section['lsec']))
 
@@ -383,11 +524,14 @@ class Highlights(QTreeWidget):
                     dec = decoration_for_style(self.palette(), h.get('style') or {}, icon_size, dpr, is_dark)
                 except Exception:
                     import traceback
+
                     traceback.print_exc()
                     dec = None
                 if dec is None:
                     dec = self.default_decoration
                 item.setData(0, Qt.ItemDataRole.DecorationRole, dec)
+                if ts := h.get('timestamp'):
+                    item.setData(0, Qt.ItemDataRole.ToolTipRole, render_timestamp(ts))
                 self.uuid_map[h['uuid']] = secnum, itemnum
                 self.num_of_items += 1
         self.apply_filters()
@@ -414,8 +558,10 @@ class Highlights(QTreeWidget):
 
     def iteritems(self):
         root = self.invisibleRootItem()
+        assert root is not None
         for i in range(root.childCount()):
             sec = root.child(i)
+            assert sec is not None
             for k in range(sec.childCount()):
                 yield sec.child(k)
 
@@ -441,7 +587,7 @@ class Highlights(QTreeWidget):
         else:
             if cr < 0:
                 cr = -1
-            indices = chain(range(cr + 1, count), range(0, cr + 1))
+            indices = chain(range(cr + 1, count), range(cr + 1))
         for i in indices:
             h = items[i].data(0, highlight_role)
             if pat.search(h['highlighted_text']) is not None or pat.search(h.get('notes') or '') is not None:
@@ -508,29 +654,32 @@ class Highlights(QTreeWidget):
                 hidden = skey not in q
             item.setHidden(hidden)
         root = self.invisibleRootItem()
+        assert root is not None
         for i in range(root.childCount()):
             sec = root.child(i)
+            assert sec is not None
             for k in range(sec.childCount()):
-                if not sec.child(k).isHidden():
+                child_k = sec.child(k)
+                assert child_k is not None
+                if not child_k.isHidden():
                     sec.setHidden(False)
                     break
             else:
                 sec.setHidden(True)
 
-    def keyPressEvent(self, ev):
-        if ev.matches(QKeySequence.StandardKey.Delete):
+    def keyPressEvent(self, event):
+        if event.matches(QKeySequence.StandardKey.Delete):
             self.delete_requested.emit()
-            ev.accept()
+            event.accept()
             return
-        if ev.key() == Qt.Key.Key_F2:
+        if event.key() == Qt.Key.Key_F2:
             self.edit_requested.emit()
-            ev.accept()
+            event.accept()
             return
-        return super().keyPressEvent(ev)
+        return super().keyPressEvent(event)
 
 
 class NotesEditDialog(Dialog):
-
     def __init__(self, notes, parent=None):
         self.initial_notes = notes
         Dialog.__init__(self, name='edit-notes-highlight', title=_('Edit notes'), parent=parent)
@@ -552,7 +701,6 @@ class NotesEditDialog(Dialog):
 
 
 class NotesDisplay(Details):
-
     notes_edited = pyqtSignal(object)
 
     def __init__(self, parent=None):
@@ -567,8 +715,10 @@ class NotesDisplay(Details):
         self.current_notes = text
         html = '\n'.join(render_notes(text))
         self.setHtml('<div><a href="edit://moo">{}</a></div>{}'.format(_('Edit notes'), html))
-        self.document().setDefaultStyleSheet('a[href] { text-decoration: none }')
-        h = self.document().size().height() + 2
+        doc = self.document()
+        assert doc is not None
+        doc.setDefaultStyleSheet('a[href] { text-decoration: none }')
+        h = doc.size().height() + 2
         self.setMaximumHeight(int(h))
 
     def anchor_clicked(self, qurl):
@@ -585,7 +735,6 @@ class NotesDisplay(Details):
 
 
 class HighlightsPanel(QWidget):
-
     request_highlight_action = pyqtSignal(object, object)
     web_action = pyqtSignal(object, object)
     toggle_requested = pyqtSignal()
@@ -616,6 +765,7 @@ class HighlightsPanel(QWidget):
         h.edit_notes_requested.connect(self.edit_notes)
         h.current_highlight_changed.connect(self.current_highlight_changed)
         h.export_selected_requested.connect(self.export_selected)
+        h.change_style_requested.connect(self.change_style_of_selected)
         self.load = h.load
         self.refresh = h.refresh
 
@@ -653,21 +803,11 @@ class HighlightsPanel(QWidget):
             self.notes_edited_signal.emit(h['uuid'], text)
 
     def set_tooltips(self, rmap):
-        a = rmap.get('create_annotation')
-        if a:
-
-            def as_text(idx):
-                return index_to_key_sequence(idx).toString(QKeySequence.SequenceFormat.NativeText)
-
-            tt = self.add_button.toolTip().partition('[')[0].strip()
-            keys = sorted(filter(None, map(as_text, a)))
-            if keys:
-                self.add_button.setToolTip('{} [{}]'.format(tt, ', '.join(keys)))
+        pass
 
     def search_requested(self, query):
         if not self.highlights.find_query(query):
-            error_dialog(self, _('No matches'), _(
-                'No highlights match the search: {}').format(query.text), show=True)
+            error_dialog(self, _('No matches'), _('No highlights match the search: {}').format(query.text), show=True)
 
     def focus(self):
         self.highlights.setFocus(Qt.FocusReason.OtherFocusReason)
@@ -686,8 +826,7 @@ class HighlightsPanel(QWidget):
             nd.show_notes(highlight['notes'])
 
     def no_selected_highlight(self):
-        error_dialog(self, _('No selected highlight'), _(
-            'No highlight is currently selected'), show=True)
+        error_dialog(self, _('No selected highlight'), _('No highlight is currently selected'), show=True)
 
     def edit_highlight(self):
         boss = get_boss()
@@ -707,10 +846,13 @@ class HighlightsPanel(QWidget):
             return self.no_selected_highlight()
         if confirm(
             ngettext(
-            'Are you sure you want to delete this highlight permanently?',
-            'Are you sure you want to delete all {} highlights permanently?',
-            len(highlights)).format(len(highlights)),
-            'delete-highlight-from-viewer', parent=self, config_set=vprefs
+                'Are you sure you want to delete this highlight permanently?',
+                'Are you sure you want to delete all {} highlights permanently?',
+                len(highlights),
+            ).format(len(highlights)),
+            'delete-highlight-from-viewer',
+            parent=self,
+            config_set=vprefs,
         ):
             for h in highlights:
                 self.request_highlight_action.emit(h['uuid'], 'delete')
@@ -727,12 +869,22 @@ class HighlightsPanel(QWidget):
             return error_dialog(self, _('No highlights'), _('No highlights selected to export'), show=True)
         Export(hl, self).exec()
 
+    def change_style_of_selected(self):
+        highlights = list(self.highlights.selected_highlights)
+        if not highlights:
+            return self.no_selected_highlight()
+        d = ChangeStyleDialog(self)
+        if d.exec() == QDialog.DialogCode.Accepted:
+            style = style_definition_for_name(d.style_name)
+            updates = [{'uuid': h['uuid'], 'style': style} for h in highlights]
+            self.web_action.emit('set-style-in-highlights', {'updates': updates})
+
     def selected_text_changed(self, text, annot_id):
         if annot_id:
             self.highlights.find_annot_id(annot_id)
 
-    def keyPressEvent(self, ev):
-        sc = get_shortcut_for(self, ev)
-        if sc == 'toggle_highlights' or ev.key() == Qt.Key.Key_Escape:
+    def keyPressEvent(self, a0):
+        sc = get_shortcut_for(self, a0)
+        if sc == 'toggle_highlights' or a0.key() == Qt.Key.Key_Escape:
             self.toggle_requested.emit()
-        return super().keyPressEvent(ev)
+        return super().keyPressEvent(a0)

@@ -12,8 +12,8 @@ class Volkskrant(BasicNewsRecipe):
     country = 'RO'
     category = 'politics, culture, Romania'
     resolve_internal_links = True
-    remove_tags_before = { 'class': 'post' }
-    remove_tags_after = { 'class': 'post_content' }
+    remove_tags_before = {'class': 'post'}
+    remove_tags_after = {'class': 'post_content'}
     remove_tags = [
         dict(
             attrs={
@@ -25,16 +25,11 @@ class Volkskrant(BasicNewsRecipe):
                 ]
             }
         ),
-        dict(
-            name=['div'],
-            attrs={
-                'class': ['mb-2']
-            }
-        ),
+        dict(name=['div'], attrs={'class': ['mb-2']}),
         dict(id=['like', 'dlik']),
         dict(name=['script', 'noscript', 'style']),
     ]
-    remove_attributes = ["class", "id", "name", "style"]
+    remove_attributes = ['class', 'id', 'name', 'style']
     encoding = 'utf-8'
     no_stylesheets = True
     ignore_duplicate_articles = {'url'}
@@ -56,7 +51,7 @@ class Volkskrant(BasicNewsRecipe):
                 url=url,
                 date=self.tag_to_string(banner_container.find(attrs={'class': 'post-date'})).strip(),
                 description='',
-                content=''
+                content='',
             )
         )
 
@@ -72,23 +67,13 @@ class Volkskrant(BasicNewsRecipe):
                 url = title_container.find('a')['href']
                 url = homepage_url + url
                 article_title = self.tag_to_string(title_container).strip()
-                author = self.tag_to_string(
-                    article.find('a', attrs={'rel': 'author'})
-                ).strip()
+                author = self.tag_to_string(article.find('a', attrs={'rel': 'author'})).strip()
                 summary = self.tag_to_string(article.find('p')).strip()
                 pubdate = self.tag_to_string(article.find(attrs={'class': 'post-date'}))
                 description = author + ' - ' + summary
-                articles.append(
-                    dict(
-                        title=article_title,
-                        url=url,
-                        date=pubdate,
-                        description=description,
-                        content=''
-                    )
-                )
+                articles.append(dict(title=article_title, url=url, date=pubdate, description=description, content=''))
 
-        sections = [("Numărul curent", articles)]
+        sections = [('Numărul curent', articles)]
         return sections
 
     def preprocess_html(self, soup):

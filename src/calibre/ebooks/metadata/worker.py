@@ -23,7 +23,7 @@ def serialize_metadata_for(paths, tdir, group_id):
     opf = metadata_to_opf(mi, default_lang='und')
     has_cover = False
     if cdata:
-        with open(os.path.join(tdir, '%s.cdata' % group_id), 'wb') as f:
+        with open(os.path.join(tdir, f'{group_id}.cdata'), 'wb') as f:
             f.write(cdata)
             has_cover = True
     return mi, opf, has_cover
@@ -56,6 +56,7 @@ def run_import_plugins(paths, group_id, tdir):
         except Exception:
             nfp = None
             import traceback
+
             traceback.print_exc()
         if nfp and os.access(nfp, os.R_OK) and not samefile(nfp, path):
             # Ensure that the filename is preserved so that

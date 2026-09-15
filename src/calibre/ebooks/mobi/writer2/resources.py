@@ -1,9 +1,5 @@
 #!/usr/bin/env python
-
-
-__license__   = 'GPL v3'
-__copyright__ = '2012, Kovid Goyal <kovid@kovidgoyal.net>'
-__docformat__ = 'restructuredtext en'
+# License: GPLv3 Copyright: 2012, Kovid Goyal <kovid@kovidgoyal.net>
 
 import os
 from io import BytesIO
@@ -16,22 +12,22 @@ from calibre.ebooks.mobi.utils import mobify_image, rescale_image, write_font_re
 from calibre.ebooks.oeb.base import OEB_RASTER_IMAGES
 from calibre.ptempfile import PersistentTemporaryFile
 from calibre.utils.imghdr import what
-from polyglot.builtins import iteritems
 
-PLACEHOLDER_GIF = b'GIF89a\x01\x00\x01\x00\xf0\x00\x00\x00\x00\x00\xff\xff\xff!\xf9\x04\x01\x00\x00\x00\x00!\xfe calibre-placeholder-gif-for-azw3\x00,\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02D\x01\x00;'  # noqa
+PLACEHOLDER_GIF = b'GIF89a\x01\x00\x01\x00\xf0\x00\x00\x00\x00\x00\xff\xff\xff!\xf9\x04\x01\x00\x00\x00\x00!\xfe calibre-placeholder-gif-for-azw3\x00,\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02D\x01\x00;'  # noqa: E501
 
 
 def process_jpegs_for_amazon(data: bytes) -> bytes:
     img = Image.open(BytesIO(data))
     if img.format == 'JPEG':
         # Amazon's MOBI renderer can't render JPEG images without JFIF metadata
-        # and images with EXIF data dont get displayed on the cover screen
+        # and images with EXIF data don't get displayed on the cover screen
         changed = not img.info
-        has_exif = False
+        # Check for EXIF segment presence via img.info, not tag count, so that
+        # empty EXIF segments (APP1 marker with zero entries) are also detected.
+        has_exif = 'exif' in img.info
         if hasattr(img, 'getexif'):
             exif = img.getexif()
-            has_exif = bool(exif)
-            if exif.get(0x0112) in (2,3,4,5,6,7,8):
+            if exif.get(0x0112) in (2, 3, 4, 5, 6, 7, 8):
                 changed = True
                 img = ImageOps.exif_transpose(img)
         if changed or has_exif:
@@ -41,10 +37,69 @@ def process_jpegs_for_amazon(data: bytes) -> bytes:
     return data
 
 
-class Resources:
+def find_tests():
+    import struct
+    import unittest
 
-    def __init__(self, oeb, opts, is_periodical, add_fonts=False,
-            process_images=True):
+    class TestProcessJpegsForAmazon(unittest.TestCase):
+        def _make_minimal_jpeg(self) -> bytes:
+            from PIL import Image as PILImage
+
+            img = PILImage.new('RGB', (8, 8), color=(255, 0, 0))
+            buf = BytesIO()
+            img.save(buf, 'JPEG')
+            return buf.getvalue()
+
+        def _inject_app1_segment(self, jpeg_data: bytes, app1_payload: bytes) -> bytes:
+            # Insert an APP1 segment right after the SOI marker (FF D8)
+            length = struct.pack('>H', len(app1_payload) + 2)
+            app1_segment = b'\xff\xe1' + length + app1_payload
+            return jpeg_data[:2] + app1_segment + jpeg_data[2:]
+
+        def _make_empty_exif_payload(self) -> bytes:
+            # Minimal TIFF with 0 IFD entries (little-endian byte order)
+            tiff = b'II' + struct.pack('<HI', 42, 8) + struct.pack('<H', 0) + struct.pack('<I', 0)
+            return b'Exif\x00\x00' + tiff
+
+        def _has_exif_segment(self, data: bytes) -> bool:
+            from PIL import Image as PILImage
+
+            img = PILImage.open(BytesIO(data))
+            return 'exif' in img.info
+
+        def test_jpeg_without_exif_is_unchanged(self):
+            data = self._make_minimal_jpeg()
+            # PIL saves with JFIF by default, not EXIF — should pass through unchanged
+            result = process_jpegs_for_amazon(data)
+            self.assertFalse(self._has_exif_segment(result))
+
+        def test_jpeg_with_populated_exif_is_stripped(self):
+            from PIL import Image as PILImage
+
+            img = PILImage.new('RGB', (8, 8), color=(0, 255, 0))
+            exif = img.getexif()
+            exif[0x010E] = 'test'  # ImageDescription tag
+            buf = BytesIO()
+            img.save(buf, 'JPEG', exif=exif.tobytes())
+            data = buf.getvalue()
+            self.assertTrue(self._has_exif_segment(data))
+            result = process_jpegs_for_amazon(data)
+            self.assertFalse(self._has_exif_segment(result))
+
+        def test_jpeg_with_empty_exif_segment_is_stripped(self):
+            # Regression test for https://bugs.launchpad.net/bugs/1943495:
+            # empty EXIF segments (APP1 marker, zero tag entries) must also be removed.
+            base = self._make_minimal_jpeg()
+            data = self._inject_app1_segment(base, self._make_empty_exif_payload())
+            self.assertTrue(self._has_exif_segment(data))
+            result = process_jpegs_for_amazon(data)
+            self.assertFalse(self._has_exif_segment(result))
+
+    return unittest.defaultTestLoader.loadTestsFromTestCase(TestProcessJpegsForAmazon)
+
+
+class Resources:
+    def __init__(self, oeb, opts, is_periodical, add_fonts=False, process_images=True):
         self.oeb, self.log, self.opts = oeb, oeb.log, opts
         self.is_periodical = is_periodical
         self.process_images = process_images
@@ -73,6 +128,7 @@ class Resources:
                 pt.write(data)
             try:
                 from calibre.utils.img import optimize_png
+
                 optimize_png(pt.name)
                 data = open(pt.name, 'rb').read()
             finally:
@@ -100,8 +156,7 @@ class Resources:
             index += 1
 
         cover_href = self.cover_offset = self.thumbnail_offset = None
-        if (oeb.metadata.cover and
-                str(oeb.metadata.cover[0]) in oeb.manifest.ids):
+        if oeb.metadata.cover and str(oeb.metadata.cover[0]) in oeb.manifest.ids:
             cover_id = str(oeb.metadata.cover[0])
             item = oeb.manifest.ids[cover_id]
             cover_href = item.href
@@ -114,7 +169,7 @@ class Resources:
             try:
                 data = self.process_image(item.data)
             except Exception:
-                self.log.warn('Bad image file %r' % item.href)
+                self.log.warn(f'Bad image file {item.href!r}')
                 continue
             else:
                 if mh_href and item.href == mh_href:
@@ -124,7 +179,7 @@ class Resources:
                 self.image_indices.add(len(self.records))
                 self.records.append(data)
                 self.item_map[item.href] = index
-                self.mime_map[item.href] = 'image/%s'%what(None, data)
+                self.mime_map[item.href] = f'image/{what(None, data)}'
                 index += 1
 
                 if cover_href and item.href == cover_href:
@@ -132,7 +187,7 @@ class Resources:
                     self.used_image_indices.add(self.cover_offset)
                     try:
                         tdata = rescale_image(data, dimen=MAX_THUMB_DIMEN, maxsizeb=MAX_THUMB_SIZE)
-                    except:
+                    except Exception:
                         self.log.warn('Failed to generate thumbnail')
                     else:
                         self.image_indices.add(len(self.records))
@@ -145,14 +200,14 @@ class Resources:
 
         if add_fonts:
             for item in self.oeb.manifest.values():
-                if item.href and item.href.rpartition('.')[-1].lower() in {
-                        'ttf', 'otf'} and isinstance(item.data, bytes):
+                if item.href and item.href.rpartition('.')[-1].lower() in {'ttf', 'otf'} and isinstance(item.data, bytes):
                     self.records.append(write_font_record(item.data))
                     self.item_map[item.href] = len(self.records)
                     self.has_fonts = True
 
     def convert_webp(self, item):
         from calibre.utils.img import image_and_format_from_data, image_to_data
+
         img, fmt = image_and_format_from_data(item.data)
         if fmt == 'webp' and not img.isNull():
             self.log.info(f'Converting WebP image {item.href} to PNG')
@@ -160,16 +215,16 @@ class Resources:
             item.media_type = 'image/png'
 
     def add_extra_images(self):
-        '''
+        """
         Add any images that were created after the call to add_resources()
-        '''
+        """
         for item in self.oeb.manifest.values():
-            if (item.media_type not in OEB_RASTER_IMAGES or item.href in self.item_map):
+            if item.media_type not in OEB_RASTER_IMAGES or item.href in self.item_map:
                 continue
             try:
                 data = self.process_image(item.data)
-            except:
-                self.log.warn('Bad image file %r' % item.href)
+            except Exception:
+                self.log.warn(f'Bad image file {item.href!r}')
             else:
                 self.records.append(data)
                 self.item_map[item.href] = len(self.records)
@@ -177,12 +232,12 @@ class Resources:
                 item.unload_data_from_memory()
 
     def serialize(self, records, used_images):
-        used_image_indices = self.used_image_indices | {
-                v-1 for k, v in iteritems(self.item_map) if k in used_images}
-        for i in self.image_indices-used_image_indices:
+        used_image_indices = self.used_image_indices | {v - 1 for k, v in self.item_map.items() if k in used_images}
+        for i in self.image_indices - used_image_indices:
             self.records[i] = PLACEHOLDER_GIF
         records.extend(self.records)
 
     def __bool__(self):
         return bool(self.records)
+
     __nonzero__ = __bool__

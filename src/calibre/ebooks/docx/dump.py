@@ -1,8 +1,5 @@
 #!/usr/bin/env python
-
-
-__license__ = 'GPL v3'
-__copyright__ = '2013, Kovid Goyal <kovid at kovidgoyal.net>'
+# License: GPLv3 Copyright: 2013, Kovid Goyal <kovid at kovidgoyal.net>
 
 import os
 import shutil
@@ -17,7 +14,7 @@ from calibre.utils.zipfile import ZipFile
 
 def pretty_all_xml_in_dir(path):
     for f in walk(path):
-        if f.endswith('.xml') or f.endswith('.rels'):
+        if f.endswith(('.xml', '.rels')):
             with open(f, 'r+b') as stream:
                 raw = stream.read()
                 if raw:

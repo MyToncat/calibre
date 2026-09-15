@@ -1,7 +1,6 @@
 #! /usr/bin/env python
 # Written by Martin v. Löwis <loewis@informatik.hu-berlin.de>
 
-
 """Generate binary message catalog from textual translation description.
 
 This program converts a textual Uniforum-style message catalog (.po file) into
@@ -34,7 +33,7 @@ import struct
 import sys
 from email.parser import HeaderParser
 
-__version__ = "1.2"
+__version__ = '1.2'
 
 MESSAGES = {}
 STATS = {'translated': 0, 'untranslated': 0, 'uniqified': 0}
@@ -63,10 +62,9 @@ def add(ctxt, msgid, msgstr, fuzzy):
                 NON_UNIQUE.add(msgstr)
             MESSAGES[msgid] = msgstr
         else:
-            MESSAGES[b"%b\x04%b" % (ctxt, msgid)] = msgstr
-    else:
-        if msgid:
-            STATS['untranslated'] += 1
+            MESSAGES[b'%b\x04%b' % (ctxt, msgid)] = msgstr
+    elif msgid:
+        STATS['untranslated'] += 1
 
 
 def generate():
@@ -85,7 +83,7 @@ def generate():
     # The header is 7 32-bit unsigned integers.  We don't use hash tables, so
     # the keys start right after the index tables.
     # translated string.
-    keystart = 7*4+16*len(keys)
+    keystart = 7 * 4 + 16 * len(keys)
     # and the values start after the keys
     valuestart = keystart + len(ids)
     koffsets = []
@@ -93,20 +91,23 @@ def generate():
     # The string table first has the list of keys, then the list of values.
     # Each entry has first the size of the string, then the file offset.
     for o1, l1, o2, l2 in offsets:
-        koffsets += [l1, o1+keystart]
-        voffsets += [l2, o2+valuestart]
+        koffsets += [l1, o1 + keystart]
+        voffsets += [l2, o2 + valuestart]
     offsets = koffsets + voffsets
-    output = struct.pack("Iiiiiii",
-                         0x950412de,       # Magic
-                         0,                 # Version
-                         len(keys),         # # of entries
-                         7*4,               # start of key index
-                         7*4+len(keys)*8,   # start of value index
-                         0, 0)              # size and offset of hash table
+    output = struct.pack(
+        'Iiiiiii',
+        0x950412DE,  # Magic
+        0,  # Version
+        len(keys),  # of entries
+        7 * 4,  # start of key index
+        7 * 4 + len(keys) * 8,  # start of value index
+        0,
+        0,
+    )  # size and offset of hash table
     try:
-        output += array.array("i", offsets).tobytes()
+        output += array.array('i', offsets).tobytes()
     except AttributeError:
-        output += array.array("i", offsets).tostring()
+        output += array.array('i', offsets).tostring()  # type: ignore
     output += ids
     output += strs
     return output
@@ -185,8 +186,7 @@ def make(filename, outfile):
         # This is a message with plural forms
         elif l.startswith('msgid_plural'):
             if section != ID:
-                print('msgid_plural not preceded by msgid on %s:%d' % (infile, lno),
-                      file=sys.stderr)
+                print(f'msgid_plural not preceded by msgid on {infile}:{lno}', file=sys.stderr)
                 sys.exit(1)
             l = l[12:]
             msgid += b'\0'  # separator of singular and plural
@@ -196,16 +196,14 @@ def make(filename, outfile):
             section = STR
             if l.startswith('msgstr['):
                 if not is_plural:
-                    print('plural without msgid_plural on %s:%d' % (infile, lno),
-                          file=sys.stderr)
+                    print(f'plural without msgid_plural on {infile}:{lno}', file=sys.stderr)
                     sys.exit(1)
                 l = l.split(']', 1)[1]
                 if msgstr:
                     msgstr += b'\0'  # Separator of the various plural forms
             else:
                 if is_plural:
-                    print('indexed msgstr required for plural on  %s:%d' % (infile, lno),
-                          file=sys.stderr)
+                    print(f'indexed msgstr required for plural on  {infile}:{lno}', file=sys.stderr)
                     sys.exit(1)
                 l = l[6:]
         # Skip empty lines
@@ -221,8 +219,7 @@ def make(filename, outfile):
         elif section == STR:
             msgstr += lb
         else:
-            print('Syntax error on %s:%d' % (infile, lno),
-                  'before:', file=sys.stderr)
+            print(f'Syntax error on {infile}:{lno}', 'before:', file=sys.stderr)
             print(l, file=sys.stderr)
             sys.exit(1)
     # Add last entry
@@ -235,7 +232,7 @@ def make(filename, outfile):
         if hasattr(outfile, 'write'):
             outfile.write(output)
         else:
-            with open(outfile, "wb") as f:
+            with open(outfile, 'wb') as f:
                 f.write(output)
     except OSError as msg:
         print(msg, file=sys.stderr)
@@ -250,7 +247,7 @@ def make_with_stats(filename, outfile):
 
 
 def run_batch(pairs):
-    for (filename, outfile) in pairs:
+    for filename, outfile in pairs:
         yield make_with_stats(filename, outfile)
 
 
@@ -260,13 +257,13 @@ def main():
     if args[0] == 'STDIN':
         MAKE_UNIQUE = args[1] == 'uniqify'
         import json
+
         results = tuple(run_batch(json.loads(sys.stdin.buffer.read())))
         sys.stdout.buffer.write(json.dumps(results).encode('utf-8'))
         sys.stdout.close()
         return
     try:
-        opts, args = getopt.getopt(args, 'hVso:',
-                                   ['help', 'version', 'statistics', 'output-file='])
+        opts, args = getopt.getopt(args, 'hVso:', ['help', 'version', 'statistics', 'output-file='])
     except getopt.error as msg:
         usage(1, msg)
 
@@ -277,7 +274,7 @@ def main():
         if opt in ('-h', '--help'):
             usage(0)
         elif opt in ('-V', '--version'):
-            print("msgfmt.py", __version__, file=sys.stderr)
+            print('msgfmt.py', __version__, file=sys.stderr)
             sys.exit(0)
         elif opt in ('-o', '--output-file'):
             outfile = arg

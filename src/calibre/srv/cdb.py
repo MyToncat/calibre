@@ -1,7 +1,6 @@
 #!/usr/bin/env python
 # License: GPLv3 Copyright: 2017, Kovid Goyal <kovid at kovidgoyal.net>
 
-
 import os
 import shutil
 import time
@@ -17,10 +16,10 @@ from calibre.srv.metadata import book_as_json
 from calibre.srv.routes import endpoint, json, msgpack_or_json
 from calibre.srv.utils import get_db, get_library_data
 from calibre.utils.imghdr import what
+from calibre.utils.localization import canonicalize_lang, reverse_lang_map_for_ui
 from calibre.utils.serialize import MSGPACK_MIME, json_loads, msgpack_loads
 from calibre.utils.speedups import ReadOnlyFileBuffer
 from polyglot.binary import from_base64_bytes
-from polyglot.builtins import iteritems
 
 receive_data_methods = {'GET', 'POST'}
 
@@ -34,9 +33,9 @@ def cdb_run(ctx, rd, which, version):
     if not getattr(m, 'readonly', False):
         ctx.check_for_write_access(rd)
     if getattr(m, 'version', 0) != int(version):
-        raise HTTPNotFound(('The module {} is not available in version: {}.'
-                           'Make sure the version of calibre used for the'
-                            ' server and calibredb match').format(which, version))
+        raise HTTPNotFound(
+            f'The module {which} is not available in version: {version}.Make sure the version of calibre used for the server and calibredb match'
+        )
     db = get_library_data(ctx, rd, strict_library_id=True)[0]
     if ctx.restriction_for(rd, db):
         raise HTTPForbidden('Cannot use the command-line db interface with a user who has per library restrictions')
@@ -60,15 +59,26 @@ def cdb_run(ctx, rd, which, version):
         tb = ''
         if not getattr(err, 'suppress_traceback', False):
             import traceback
+
             tb = traceback.format_exc()
         return {'err': as_unicode(err), 'tb': tb}
     return {'result': result}
 
 
-@endpoint('/cdb/add-book/{job_id}/{add_duplicates}/{filename}/{library_id=None}',
-          needs_db_write=True, postprocess=json, methods=receive_data_methods, cache_control='no-cache')
+def is_recipe_fmt(fmt: str) -> bool:
+    fmt = fmt.lower().removeprefix('original_')
+    return fmt in ('recipe', 'downloaded_recipe')
+
+
+@endpoint(
+    '/cdb/add-book/{job_id}/{add_duplicates}/{filename}/{library_id=None}',
+    needs_db_write=True,
+    postprocess=json,
+    methods=receive_data_methods,
+    cache_control='no-cache',
+)
 def cdb_add_book(ctx, rd, job_id, add_duplicates, filename, library_id):
-    '''
+    """
     Add a file as a new book. The file contents must be in the body of the request.
 
     The response will also have the title/authors/languages read from the
@@ -78,7 +88,7 @@ def cdb_add_book(ctx, rd, job_id, add_duplicates, filename, library_id):
     `duplicates` field specifying the title and authors for all duplicate
     matches. It will also return the value of `job_id` as the `id` field and
     `filename` as the `filename` field.
-    '''
+    """
     db = get_db(ctx, rd, library_id)
     if ctx.restriction_for(rd, db):
         raise HTTPForbidden('Cannot use the add book interface with a user who has per library restrictions')
@@ -89,6 +99,8 @@ def cdb_add_book(ctx, rd, job_id, add_duplicates, filename, library_id):
     fmt = fmt[1:] if fmt else None
     if not fmt:
         raise HTTPBadRequest('An filename with no extension is not allowed')
+    if is_recipe_fmt(fmt):
+        raise HTTPForbidden('Cannot use the add book interface to add recipe files, as they allow code execution')
     if isinstance(rd.request_body_file, BytesIO):
         raise HTTPBadRequest('A request body containing the file data must be specified')
     add_duplicates = add_duplicates in ('y', '1')
@@ -97,6 +109,7 @@ def cdb_add_book(ctx, rd, job_id, add_duplicates, filename, library_id):
     with open(path, 'wb') as f:
         shutil.copyfileobj(rd.request_body_file, f)
     from calibre.ebooks.metadata.worker import run_import_plugins
+
     path = run_import_plugins((path,), time.monotonic_ns(), rd.tdir)[0]
     with open(path, 'rb') as f:
         mi = get_metadata(f, stream_type=os.path.splitext(path)[1][1:], use_libprs_metadata=True)
@@ -113,8 +126,13 @@ def cdb_add_book(ctx, rd, job_id, add_duplicates, filename, library_id):
     return ans
 
 
-@endpoint('/cdb/delete-books/{book_ids}/{library_id=None}',
-          needs_db_write=True, postprocess=json, methods=receive_data_methods, cache_control='no-cache')
+@endpoint(
+    '/cdb/delete-books/{book_ids}/{library_id=None}',
+    needs_db_write=True,
+    postprocess=json,
+    methods=receive_data_methods,
+    cache_control='no-cache',
+)
 def cdb_delete_book(ctx, rd, book_ids, library_id):
     db = get_db(ctx, rd, library_id)
     if ctx.restriction_for(rd, db):
@@ -128,8 +146,14 @@ def cdb_delete_book(ctx, rd, book_ids, library_id):
     return {}
 
 
-@endpoint('/cdb/set-cover/{book_id}/{library_id=None}', types={'book_id': int},
-            needs_db_write=True, postprocess=json, methods=receive_data_methods, cache_control='no-cache')
+@endpoint(
+    '/cdb/set-cover/{book_id}/{library_id=None}',
+    types={'book_id': int},
+    needs_db_write=True,
+    postprocess=json,
+    methods=receive_data_methods,
+    cache_control='no-cache',
+)
 def cdb_set_cover(ctx, rd, book_id, library_id):
     db = get_db(ctx, rd, library_id)
     if ctx.restriction_for(rd, db):
@@ -155,8 +179,14 @@ def load_payload_data(rd):
         raise HTTPBadRequest('Invalid encoded data')
 
 
-@endpoint('/cdb/set-fields/{book_id}/{library_id=None}', types={'book_id': int},
-          needs_db_write=True, postprocess=msgpack_or_json, methods=receive_data_methods, cache_control='no-cache')
+@endpoint(
+    '/cdb/set-fields/{book_id}/{library_id=None}',
+    types={'book_id': int},
+    needs_db_write=True,
+    postprocess=msgpack_or_json,
+    methods=receive_data_methods,
+    cache_control='no-cache',
+)
 def cdb_set_fields(ctx, rd, book_id, library_id):
     db = get_db(ctx, rd, library_id)
     if ctx.restriction_for(rd, db):
@@ -168,8 +198,7 @@ def cdb_set_fields(ctx, rd, book_id, library_id):
         if not isinstance(changes, dict):
             raise TypeError('changes must be a dict')
     except Exception:
-        raise HTTPBadRequest(
-        '''Data must be of the form {'changes': {'title': 'New Title', ...}, 'loaded_book_ids':[book_id1, book_id2, ...]'}''')
+        raise HTTPBadRequest('''Data must be of the form {'changes': {'title': 'New Title', ...}, 'loaded_book_ids':[book_id1, book_id2, ...]'}''')
     dirtied = set()
     cdata = changes.pop('cover', False)
     if cdata is not False:
@@ -194,6 +223,8 @@ def cdb_set_fields(ctx, rd, book_id, library_id):
             except Exception:
                 raise HTTPBadRequest('Format has no extension')
             if fmt:
+                if fmt.lower() in ('recipe', 'original_recipe'):
+                    raise HTTPForbidden('Cannot use the add book interface to add recipe files, as they allow code execution')
                 try:
                     fmt_data = from_base64_bytes(data['data_url'].split(',', 1)[-1])
                 except Exception:
@@ -205,7 +236,17 @@ def cdb_set_fields(ctx, rd, book_id, library_id):
         db.remove_formats({book_id: list(removed_formats)})
         dirtied.add(book_id)
 
-    for field, value in iteritems(changes):
+    for field, value in changes.items():
+        if field == 'languages' and value:
+            rmap = reverse_lang_map_for_ui()
+
+            def to_lang_code(x):
+                return rmap.get(x, canonicalize_lang(x))
+
+            if isinstance(value, str):
+                value = (value,)
+
+            value = list(filter(None, map(to_lang_code, value)))
         dirtied |= db.set_field(field, {book_id: value})
     ctx.notify_changes(db.backend.library_path, metadata(dirtied))
     all_ids = dirtied if all_dirtied else (dirtied & loaded_book_ids)
@@ -213,8 +254,13 @@ def cdb_set_fields(ctx, rd, book_id, library_id):
     return {bid: book_as_json(db, bid) for bid in all_ids}
 
 
-@endpoint('/cdb/copy-to-library/{target_library_id}/{library_id=None}', needs_db_write=True,
-        postprocess=msgpack_or_json, methods=receive_data_methods, cache_control='no-cache')
+@endpoint(
+    '/cdb/copy-to-library/{target_library_id}/{library_id=None}',
+    needs_db_write=True,
+    postprocess=msgpack_or_json,
+    methods=receive_data_methods,
+    cache_control='no-cache',
+)
 def cdb_copy_to_library(ctx, rd, target_library_id, library_id):
     db_src = get_db(ctx, rd, library_id)
     db_dest = get_db(ctx, rd, target_library_id)
@@ -238,17 +284,26 @@ def cdb_copy_to_library(ctx, rd, target_library_id, library_id):
     if duplicate_action != 'add':
         identical_books_data = db_dest.data_for_find_identical_books()
     to_remove = set()
-    from calibre.db.copy_to_library import copy_one_book
+    from calibre.db.copy_to_library import copy_one_book, source_removal_actions
+
     for book_id in book_ids:
         try:
             rdata = copy_one_book(
-                    book_id, db_src, db_dest, duplicate_action=duplicate_action, automerge_action=automerge_action,
-                    preserve_uuid=move_books, preserve_date=preserve_date, identical_books_data=identical_books_data)
-            if move_books:
+                book_id,
+                db_src,
+                db_dest,
+                duplicate_action=duplicate_action,
+                automerge_action=automerge_action,
+                preserve_uuid=move_books,
+                preserve_date=preserve_date,
+                identical_books_data=identical_books_data,
+            )
+            if move_books and rdata['action'] in source_removal_actions:
                 to_remove.add(book_id)
             response[book_id] = {'ok': True, 'payload': rdata}
         except Exception:
             import traceback
+
             response[book_id] = {'ok': False, 'payload': traceback.format_exc()}
 
     if to_remove:

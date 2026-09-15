@@ -21,12 +21,12 @@ class Ing_dk(BasicNewsRecipe):
     auto_cleanup = True
 
     keep_only_tags = [
-        dict(name="div", attrs={'class': 'menu-article-current-title'}),
-        dict(name="section", attrs={'class': 'byline'}),
-        dict(name="section", attrs={'class': 'body'}),
+        dict(name='div', attrs={'class': 'menu-article-current-title'}),
+        dict(name='section', attrs={'class': 'byline'}),
+        dict(name='section', attrs={'class': 'body'}),
     ]
 
-    feeds          = [
+    feeds = [
         ('Biotek', 'https://ing.dk/rss/term/341'),
         ('Byggeri', 'https://ing.dk/rss/term/356'),
         ('Elektronik', 'https://ing.dk/rss/term/355'),

@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 
 
-__license__   = 'GPL v3'
+__license__ = 'GPL v3'
 __copyright__ = '2009, Kovid Goyal <kovid@kovidgoyal.net>'
 __docformat__ = 'restructuredtext en'
 
@@ -19,6 +19,7 @@ NMAKE = RC = msvc = MT = win_inc = win_lib = win_cc = win_ld = None
 @lru_cache(maxsize=2)
 def pyqt_sip_abi_version():
     import PyQt6
+
     if getattr(PyQt6, '__file__', None):
         bindings_path = os.path.join(os.path.dirname(PyQt6.__file__), 'bindings', 'QtCore', 'QtCore.toml')
         if os.path.exists(bindings_path):
@@ -40,6 +41,7 @@ def merge_paths(a, b):
 
 if iswindows:
     from setup.vcvars import query_vcvarsall
+
     env = query_vcvarsall()
     win_path = env['PATH']
     os.environ['PATH'] = merge_paths(env['PATH'], os.environ['PATH'])
@@ -78,14 +80,13 @@ def run_pkgconfig(name, envvar, default, flag, prefix):
         ev = os.environ.get(envvar, None)
         if ev:
             ans = [x.strip() for x in ev.split(os.pathsep)]
-            ans = [x for x in ans if x and (prefix=='-l' or os.path.exists(x))]
+            ans = [x for x in ans if x and (prefix == '-l' or os.path.exists(x))]
     if not ans:
         try:
-            raw = subprocess.Popen([PKGCONFIG, flag, name],
-                stdout=subprocess.PIPE).stdout.read().decode('utf-8')
+            raw = subprocess.Popen([PKGCONFIG, flag, name], stdout=subprocess.PIPE).stdout.read().decode('utf-8')
             ans = [x.strip() for x in raw.split(prefix)]
-            ans = [x for x in ans if x and (prefix=='-l' or os.path.exists(x))]
-        except:
+            ans = [x for x in ans if x and (prefix == '-l' or os.path.exists(x))]
+        except Exception:
             print('Failed to run pkg-config:', PKGCONFIG, 'for:', name)
 
     return ans or ([default] if default else [])
@@ -96,11 +97,11 @@ def pkgconfig_include_dirs(name, envvar, default):
 
 
 def pkgconfig_lib_dirs(name, envvar, default):
-    return run_pkgconfig(name, envvar, default,'--libs-only-L', '-L')
+    return run_pkgconfig(name, envvar, default, '--libs-only-L', '-L')
 
 
 def pkgconfig_libs(name, envvar, default):
-    return run_pkgconfig(name, envvar, default,'--libs-only-l', '-l')
+    return run_pkgconfig(name, envvar, default, '--libs-only-l', '-l')
 
 
 def consolidate(envvar, default):
@@ -109,15 +110,19 @@ def consolidate(envvar, default):
     return [x for x in ans if x and os.path.exists(x)]
 
 
-qraw = subprocess.check_output([QMAKE, '-query']).decode('utf-8')
+qraw = None
 
 
 def readvar(name):
-    return re.search('^%s:(.+)$' % name, qraw, flags=re.M).group(1).strip()
+    global qraw
+    if qraw is None:
+        qraw = subprocess.check_output([QMAKE, '-query']).decode('utf-8')
+    return re.search(f'^{name}:(.+)$', qraw, flags=re.M).group(1).strip()
 
 
-qt = {x:readvar(y) for x, y in {'libs':'QT_INSTALL_LIBS', 'plugins':'QT_INSTALL_PLUGINS'}.items()}
+qt = {x: readvar(y) for x, y in {'libs': 'QT_INSTALL_LIBS', 'plugins': 'QT_INSTALL_PLUGINS', 'version_str': 'QT_VERSION'}.items()}
 qmakespec = readvar('QMAKE_SPEC') if iswindows else None
+qt['version'] = tuple(map(int, qt['version_str'].split('.')[:2]))
 freetype_lib_dirs = []
 freetype_libs = []
 freetype_inc_dirs = []
@@ -143,16 +148,21 @@ hunspell_lib_dirs = []
 hyphen_inc_dirs = []
 hyphen_lib_dirs = []
 
+ffmpeg_inc_dirs = []
+ffmpeg_lib_dirs = []
+
 uchardet_inc_dirs, uchardet_lib_dirs, uchardet_libs = [], [], ['uchardet']
 
 openssl_inc_dirs, openssl_lib_dirs = [], []
 
+piper_inc_dirs, piper_lib_dirs, piper_libs = [], [], []
+
 ICU = sw = ''
 
 if iswindows:
-    prefix  = sw = os.environ.get('SW', r'C:\cygwin64\home\kovid\sw')
-    sw_inc_dir  = os.path.join(prefix, 'include')
-    sw_lib_dir  = os.path.join(prefix, 'lib')
+    prefix = sw = os.environ.get('SW', r'C:\cygwin64\home\kovid\sw')
+    sw_inc_dir = os.path.join(prefix, 'include')
+    sw_lib_dir = os.path.join(prefix, 'lib')
     icu_inc_dirs = [sw_inc_dir]
     icu_lib_dirs = [sw_lib_dir]
     hyphen_inc_dirs = [sw_inc_dir]
@@ -173,11 +183,14 @@ if iswindows:
     zlib_lib_dirs = [sw_lib_dir]
     podofo_inc = os.path.join(sw_inc_dir, 'podofo')
     podofo_lib = sw_lib_dir
+    piper_inc_dirs = [sw_inc_dir, os.path.join(sw_inc_dir, 'onnxruntime')]
+    piper_lib_dirs = [sw_lib_dir]
+    piper_libs = ['espeak-ng', 'onnxruntime']
 elif ismacos:
     sw = os.environ.get('SW', os.path.expanduser('~/sw'))
-    sw_inc_dir  = os.path.join(sw, 'include')
-    sw_lib_dir  = os.path.join(sw, 'lib')
-    sw_bin_dir  = os.path.join(sw, 'bin')
+    sw_inc_dir = os.path.join(sw, 'include')
+    sw_lib_dir = os.path.join(sw, 'lib')
+    sw_bin_dir = os.path.join(sw, 'bin')
     podofo_inc = os.path.join(sw_inc_dir, 'podofo')
     hunspell_inc_dirs = [os.path.join(sw_inc_dir, 'hunspell')]
     podofo_lib = sw_lib_dir
@@ -189,9 +202,11 @@ elif ismacos:
     openssl_lib_dirs = [os.path.join(SSL, 'lib')]
     if os.path.exists(os.path.join(sw_bin_dir, 'cmake')):
         CMAKE = os.path.join(sw_bin_dir, 'cmake')
+    piper_inc_dirs = [sw_inc_dir, os.path.join(sw_inc_dir, 'onnxruntime')]
+    piper_lib_dirs = [sw_lib_dir]
+    piper_libs = ['espeak-ng', 'onnxruntime']
 else:
-    freetype_inc_dirs = pkgconfig_include_dirs('freetype2', 'FT_INC_DIR',
-            '/usr/include/freetype2')
+    freetype_inc_dirs = pkgconfig_include_dirs('freetype2', 'FT_INC_DIR', '/usr/include/freetype2')
     freetype_lib_dirs = pkgconfig_lib_dirs('freetype2', 'FT_LIB_DIR', '/usr/lib')
     freetype_libs = pkgconfig_libs('freetype2', '', '')
     hunspell_inc_dirs = pkgconfig_include_dirs('hunspell', 'HUNSPELL_INC_DIR', '/usr/include/hunspell')
@@ -205,19 +220,38 @@ else:
     uchardet_inc_dirs = pkgconfig_include_dirs('uchardet', '', '/usr/include/uchardet')
     uchardet_lib_dirs = pkgconfig_lib_dirs('uchardet', '', '/usr/lib')
     uchardet_libs = pkgconfig_libs('uchardet', '', '')
+    piper_inc_dirs = pkgconfig_include_dirs('espeak-ng', '', '/usr/include') + pkgconfig_include_dirs('libonnxruntime', '', '/usr/include/onnxruntime')
+    piper_lib_dirs = pkgconfig_lib_dirs('espeak-ng', '', '/usr/lib') + pkgconfig_lib_dirs('libonnxruntime', '', '/usr/lib')
+    piper_libs = pkgconfig_libs('espeak-ng', '', 'espeak-ng') + pkgconfig_libs('libonnxruntime', '', 'onnxruntime')
+    for x in ('libavcodec', 'libavformat', 'libavdevice', 'libavfilter', 'libavutil', 'libpostproc', 'libswresample', 'libswscale'):
+        for inc in pkgconfig_include_dirs(x, '', '/usr/include'):
+            if inc and inc not in ffmpeg_inc_dirs:
+                ffmpeg_inc_dirs.append(inc)
+        for lib in pkgconfig_lib_dirs(x, '', '/usr/lib'):
+            if lib and lib not in ffmpeg_lib_dirs:
+                ffmpeg_lib_dirs.append(lib)
+
+if os.path.exists(os.path.join(sw, 'ffmpeg')):
+    ffmpeg_inc_dirs = [os.path.join(sw, 'ffmpeg', 'include')] + ffmpeg_inc_dirs
+    ffmpeg_lib_dirs = [os.path.join(sw, 'ffmpeg', 'bin' if iswindows else 'lib')] + ffmpeg_lib_dirs
 
 
 if 'PODOFO_PREFIX' in os.environ:
     os.environ['PODOFO_LIB_DIR'] = os.path.join(os.environ['PODOFO_PREFIX'], 'lib')
     os.environ['PODOFO_INC_DIR'] = os.path.join(os.environ['PODOFO_PREFIX'], 'include', 'podofo')
-    os.environ['PODOFO_LIB_NAME'] = os.path.join(os.environ['PODOFO_PREFIX'], 'lib', 'libpodofo.so.1')
+    os.environ['PODOFO_LIB_NAME'] = os.path.join(os.environ['PODOFO_PREFIX'], 'lib', 'libpodofo.so')
 podofo_lib = os.environ.get('PODOFO_LIB_DIR', podofo_lib)
 podofo_inc = os.environ.get('PODOFO_INC_DIR', podofo_inc)
 podofo = os.environ.get('PODOFO_LIB_NAME', 'podofo')
 
-podofo_error = None if os.path.exists(os.path.join(podofo_inc, 'podofo.h')) else \
-        ('PoDoFo not found on your system. Various PDF related',
-    ' functionality will not work. Use the PODOFO_INC_DIR and',
-    ' PODOFO_LIB_DIR environment variables.')
+podofo_error = (
+    None
+    if os.path.exists(os.path.join(podofo_inc, 'podofo.h'))
+    else (
+        'PoDoFo not found on your system. Various PDF related',
+        ' functionality will not work. Use the PODOFO_INC_DIR and',
+        ' PODOFO_LIB_DIR environment variables.',
+    )
+)
 podofo_inc_dirs = [podofo_inc, os.path.dirname(podofo_inc)]
 podofo_lib_dirs = [podofo_lib]

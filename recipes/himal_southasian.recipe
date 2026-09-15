@@ -2,8 +2,9 @@
 # vim:fileencoding=utf-8
 import json
 
-from calibre.web.feeds.news import BasicNewsRecipe
 from html5_parser import parse
+
+from calibre.web.feeds.news import BasicNewsRecipe
 
 
 def get_story(story):
@@ -16,6 +17,7 @@ def get_story(story):
         for x in story['story-elements']:
             yield from get_story(x)
 
+
 def img(img):
     yield '<p>'
     if 'image-s3-key' in img:
@@ -24,12 +26,15 @@ def img(img):
         yield '<div class="cap">' + img['title'] + '</div>'
     yield '</p>'
 
+
 class himal(BasicNewsRecipe):
     title = 'Himal Southasian'
     __author__ = 'unkn0wn'
-    description = ('Himal Southasian is Southasia’s first and only regional magazine of politics and culture.'
-    ' For over 30 years, Himal Southasian has challenged nationalist orthodoxies, and covered the region with '
-    'imagination, rigour and irreverence, with contributions from some of the most interesting writers in the region.')
+    description = (
+        'Himal Southasian is Southasia’s first and only regional magazine of politics and culture.'
+        ' For over 30 years, Himal Southasian has challenged nationalist orthodoxies, and covered the region with '
+        'imagination, rigour and irreverence, with contributions from some of the most interesting writers in the region.'
+    )
     language = 'en_IN'
     no_stylesheets = True
     remove_attributes = ['height', 'width', 'style']
@@ -43,7 +48,7 @@ class himal(BasicNewsRecipe):
         'days': {
             'short': 'Oldest article to download from this news source. In days ',
             'long': 'For example, 0.5, gives you articles from the past 12 hours',
-            'default': str(oldest_article)
+            'default': str(oldest_article),
         }
     }
 
@@ -59,9 +64,7 @@ class himal(BasicNewsRecipe):
         .subhead { font-style:italic; color:#202020; }
     '''
 
-    feeds = [
-        ('Articles', 'https://www.himalmag.com/feed')
-    ]
+    feeds = [('Articles', 'https://www.himalmag.com/feed')]
 
     def preprocess_raw_html(self, raw, *a):
         root = parse(raw)

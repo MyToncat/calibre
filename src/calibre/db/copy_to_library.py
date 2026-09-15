@@ -1,11 +1,11 @@
 #!/usr/bin/env python
 # License: GPL v3 Copyright: 2019, Kovid Goyal <kovid at kovidgoyal.net>
 
-
 from calibre.db.utils import find_identical_books
-from calibre.utils.config import tweaks
+from calibre.utils.config import prefs
 from calibre.utils.date import now
-from polyglot.builtins import iteritems
+
+source_removal_actions = frozenset({'add', 'automerge'})
 
 
 def automerge_book(automerge_action, book_id, mi, identical_book_list, newdb, format_map, extra_file_map):
@@ -16,11 +16,13 @@ def automerge_book(automerge_action, book_id, mi, identical_book_list, newdb, fo
         if ib_fmts:
             seen_fmts |= {fmt.upper() for fmt in ib_fmts}
         at_least_one_format_added = False
-        for fmt, path in iteritems(format_map):
+        for fmt, path in format_map.items():
             if newdb.add_format(identical_book, fmt, path, replace=replace, run_hooks=False):
                 at_least_one_format_added = True
         if at_least_one_format_added and extra_file_map:
             newdb.add_extra_files(identical_book, extra_file_map, replace=False, auto_rename=True)
+        if mi.cover_data and mi.cover_data[1] and not newdb.field_for('cover', identical_book):
+            newdb.set_cover({identical_book: mi.cover_data[1]})
 
     if automerge_action == 'new record':
         incoming_fmts = {fmt.upper() for fmt in format_map}
@@ -33,8 +35,12 @@ def automerge_book(automerge_action, book_id, mi, identical_book_list, newdb, fo
             # formats, but no real harm is done by having
             # all formats
             new_book_id = newdb.add_books(
-                [(mi, format_map)], add_duplicates=True, apply_import_tags=tweaks['add_new_book_tags_when_importing_books'],
-                preserve_uuid=False, run_hooks=False)[0][0]
+                [(mi, format_map)],
+                add_duplicates=True,
+                apply_import_tags=prefs['add_new_book_tags_when_importing_books'],
+                preserve_uuid=False,
+                run_hooks=False,
+            )[0][0]
             if extra_file_map:
                 newdb.add_extra_files(new_book_id, extra_file_map)
             return new_book_id
@@ -46,7 +52,7 @@ def postprocess_copy(book_id, new_book_id, new_authors, db, newdb, identical_boo
     if new_authors:
         author_id_map = db.get_item_ids('authors', new_authors)
         sort_map = {}
-        for author, aid in iteritems(author_id_map):
+        for author, aid in author_id_map.items():
             if aid is not None:
                 adata = db.author_data((aid,)).get(aid)
                 if adata is not None:
@@ -60,7 +66,7 @@ def postprocess_copy(book_id, new_book_id, new_authors, db, newdb, identical_boo
 
     co = db.conversion_options(book_id)
     if co is not None:
-        newdb.set_conversion_options({new_book_id:co})
+        newdb.set_conversion_options({new_book_id: co})
     annots = db.all_annotations_for_book(book_id)
     if annots:
         newdb.restore_annotations(new_book_id, annots)
@@ -69,8 +75,15 @@ def postprocess_copy(book_id, new_book_id, new_authors, db, newdb, identical_boo
 
 
 def copy_one_book(
-        book_id, src_db, dest_db, duplicate_action='add', automerge_action='overwrite',
-        preserve_date=True, identical_books_data=None, preserve_uuid=False):
+    book_id,
+    src_db,
+    dest_db,
+    duplicate_action='add',
+    automerge_action='overwrite',
+    preserve_date=True,
+    identical_books_data=None,
+    preserve_uuid=False,
+):
     db = src_db.new_api
     newdb = dest_db.new_api
     with db.safe_read_lock, newdb.write_lock:
@@ -87,17 +100,21 @@ def copy_one_book(
             if path:
                 format_map[fmt.upper()] = path
         identical_book_list = set()
-        new_authors = {k for k, v in iteritems(newdb.get_item_ids('authors', mi.authors)) if v is None}
+        new_authors = {k for k, v in newdb.get_item_ids('authors', mi.authors).items() if v is None}
         new_book_id = None
         return_data = {
-                'book_id': book_id, 'title': mi.title, 'authors': mi.authors, 'author': mi.format_field('authors')[1],
-                'action': 'add', 'new_book_id': None
+            'book_id': book_id,
+            'title': mi.title,
+            'authors': mi.authors,
+            'author': mi.format_field('authors')[1],
+            'action': 'add',
+            'new_book_id': None,
         }
         if duplicate_action != 'add':
             # Scanning for dupes can be slow on a large library so
             # only do it if the option is set
             if identical_books_data is None:
-                identical_books_data = identical_books_data = newdb.data_for_find_identical_books()
+                identical_books_data = newdb.data_for_find_identical_books()
             identical_book_list = find_identical_books(mi, identical_books_data)
             if identical_book_list:  # books with same author and nearly same title exist in newdb
                 if duplicate_action == 'add_formats_to_existing':
@@ -110,11 +127,15 @@ def copy_one_book(
                 return return_data
 
         new_book_id = newdb.add_books(
-            [(mi, format_map)], add_duplicates=True, apply_import_tags=tweaks['add_new_book_tags_when_importing_books'],
-            preserve_uuid=preserve_uuid, run_hooks=False)[0][0]
-        bp = db.field_for('path', book_id)
+            [(mi, format_map)],
+            add_duplicates=True,
+            apply_import_tags=prefs['add_new_book_tags_when_importing_books'],
+            preserve_uuid=preserve_uuid,
+            run_hooks=False,
+        )[0][0]
+        bp = db.get_book_path(book_id, sep='/', unsafe=True)
         if bp:
-            for (relpath, src_path, stat_result) in db.backend.iter_extra_files(book_id, bp, db.fields['formats'], yield_paths=True):
+            for relpath, src_path, stat_result in db.backend.iter_extra_files(book_id, bp, db.fields['formats'], yield_paths=True):
                 nbp = newdb.field_for('path', new_book_id)
                 if nbp:
                     newdb.backend.add_extra_file(relpath, src_path, nbp)

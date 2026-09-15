@@ -1,6 +1,4 @@
-__license__   = 'GPL v3'
-__copyright__ = '2008, Kovid Goyal <kovid at kovidgoyal.net>'
-
+# License: GPLv3 Copyright: 2008, Kovid Goyal <kovid at kovidgoyal.net>
 
 import gc
 import os
@@ -13,27 +11,29 @@ from calibre import as_unicode, prepare_string_for_xml, prints
 from calibre.constants import iswindows
 from calibre.gui2 import error_dialog
 from calibre.utils.config import OptionParser
+from calibre.utils.localization import _
 from polyglot.io import PolyglotStringIO
 
 
-def option_parser(usage='''\
+def option_parser(
+    usage='''\
 Usage: %prog [options]
 
 Launch the Graphical User Interface
-'''):
+''',
+):
     parser = OptionParser(usage)
     return parser
 
 
 class GarbageCollector(QObject):
-
-    '''
+    """
     Disable automatic garbage collection and instead collect manually
     every INTERVAL milliseconds.
 
     This is done to ensure that garbage collection only happens in the GUI
     thread, as otherwise Qt can crash.
-    '''
+    """
 
     INTERVAL = 5000
 
@@ -74,7 +74,6 @@ class GarbageCollector(QObject):
 
 
 class ExceptionHandler:
-
     def __init__(self, main_window):
         self.wref = weakref.ref(main_window)
 
@@ -87,10 +86,9 @@ class ExceptionHandler:
 
 
 class MainWindow(QMainWindow):
-
     ___menu_bar = None
-    ___menu     = None
-    __actions   = []
+    ___menu = None
+    __actions = []
     display_unhandled_exception = pyqtSignal(object, object, object)
 
     @classmethod
@@ -109,7 +107,7 @@ class MainWindow(QMainWindow):
     @classmethod
     def get_menubar_actions(cls):
         preferences_action = QAction(QIcon.ic('config.png'), _('&Preferences'), None)
-        quit_action        = QAction(QIcon.ic('window-close.png'), _('&Quit'), None)
+        quit_action = QAction(QIcon.ic('window-close.png'), _('&Quit'), None)
         preferences_action.setMenuRole(QAction.MenuRole.PreferencesRole)
         quit_action.setMenuRole(QAction.MenuRole.QuitRole)
         return preferences_action, quit_action
@@ -118,7 +116,7 @@ class MainWindow(QMainWindow):
     def native_menubar(self):
         return self.___menu_bar
 
-    def __init__(self, opts, parent=None, disable_automatic_gc=False):
+    def __init__(self, opts=None, parent=None, disable_automatic_gc=False):
         QMainWindow.__init__(self, parent)
         self.display_unhandled_exception.connect(self.unhandled_exception, type=Qt.ConnectionType.QueuedConnection)
         if disable_automatic_gc:
@@ -139,6 +137,7 @@ class MainWindow(QMainWindow):
         import errno
 
         from calibre_extensions import winutil
+
         if not (e.winerror == winutil.ERROR_SHARING_VIOLATION or e.errno == errno.EACCES or isinstance(e, PermissionError)):
             return False
         msg = getattr(e, 'locking_violation_msg', '')
@@ -154,18 +153,21 @@ class MainWindow(QMainWindow):
                         dmsg = _('The folder "{}" is opened in another program, so calibre cannot access it.').format(fname)
                     else:
                         dmsg = _('The file "{}" is opened in another program, so calibre cannot access it.').format(fname)
+                elif is_folder:
+                    dmsg = _('A folder is open in another program so calibre cannot access it.')
                 else:
-                    if is_folder:
-                        dmsg = _('A folder is open in another program so calibre cannot access it.')
-                    else:
-                        dmsg = _('A file is open in another program so calibre cannot access it.')
+                    dmsg = _('A file is open in another program so calibre cannot access it.')
                 if is_folder:
-                    dmsg += _('This is usually caused by leaving Windows explorer or a similar file manager open'
-                              ' to a folder in the calibre library. Close Windows explorer and retry.')
+                    dmsg += _(
+                        'This is usually caused by leaving Windows explorer or a similar file manager open'
+                        ' to a folder in the calibre library. Close Windows explorer and retry.'
+                    )
                 else:
-                    dmsg += _('This is usually caused by software such as antivirus or file sync (aka DropBox and similar)'
-                              ' accessing files in the calibre library folder at the same time as calibre. Try excluding'
-                              ' the calibre library folder from such software.')
+                    dmsg += _(
+                        'This is usually caused by software such as antivirus or file sync (aka DropBox and similar)'
+                        ' accessing files in the calibre library folder at the same time as calibre. Try excluding'
+                        ' the calibre library folder from such software.'
+                    )
                 error_dialog(self, _('Cannot open file or folder as it is in use'), msg + dmsg, det_msg=det_msg, show=True)
                 return True
             if msg:
@@ -173,8 +175,7 @@ class MainWindow(QMainWindow):
                     dmsg = _('Permission was denied by the operating system when calibre tried to access the file: "{0}".').format(fname)
                 else:
                     dmsg = _('Permission was denied by the operating system when calibre tried to access a file.')
-                dmsg += ' ' + _('This means either that the permissions on the file or its parent folder are incorrect or the file is'
-                ' open in another program.')
+                dmsg += ' ' + _('This means either that the permissions on the file or its parent folder are incorrect or the file is open in another program.')
                 error_dialog(self, _('Cannot open file or folder'), msg + dmsg, det_msg=det_msg, show=True)
                 return True
             return False
@@ -217,12 +218,14 @@ class MainWindow(QMainWindow):
         if exc_type is KeyboardInterrupt:
             return
         import traceback
+
         try:
             sio = PolyglotStringIO(errors='replace')
             try:
                 from calibre.debug import print_basic_debug_info
+
                 print_basic_debug_info(out=sio)
-            except:
+            except Exception:
                 pass
             traceback.print_exception(exc_type, value, tb, file=sio)
             if getattr(value, 'locking_debug_msg', None):
@@ -234,12 +237,11 @@ class MainWindow(QMainWindow):
                     return
             except Exception:
                 traceback.print_exc()
-            msg = '<b>%s</b>:'%exc_type.__name__ + prepare_string_for_xml(as_unicode(value))
-            error_dialog(self, _('Unhandled exception'), msg, det_msg=fe,
-                    show=True)
+            msg = f'<b>{exc_type.__name__}</b>:' + prepare_string_for_xml(as_unicode(value))
+            error_dialog(self, _('Unhandled exception'), msg, det_msg=fe, show=True)
         except BaseException:
             pass
-        except:
+        except Exception:
             pass
 
 
@@ -263,11 +265,14 @@ def clone_menu(menu):
         ans.setEnabled(ac.isEnabled())
         ans.setStatusTip(ac.statusTip())
         ans.setVisible(ac.isVisible())
+        ans.setCheckable(ac.isCheckable())
+        ans.setChecked(ac.isChecked())
         return ans
 
     def clone_one_menu(m):
         m.aboutToShow.emit()
         ans = QMenu(m.parent())
+        ans.hovered.connect(m.hovered.emit)
         for ac in m.actions():
             cac = clone_action(ac, ans)
             ans.addAction(cac)
@@ -275,4 +280,5 @@ def clone_menu(menu):
             if m is not None:
                 cac.setMenu(clone_menu(m))
         return ans
+
     return clone_one_menu(menu)

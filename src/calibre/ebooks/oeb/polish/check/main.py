@@ -1,10 +1,8 @@
 #!/usr/bin/env python
-
-
-__license__ = 'GPL v3'
-__copyright__ = '2013, Kovid Goyal <kovid at kovidgoyal.net>'
+# License: GPLv3 Copyright: 2013, Kovid Goyal <kovid at kovidgoyal.net>
 
 from collections import namedtuple
+from functools import partial
 
 from calibre.ebooks.oeb.base import OEB_DOCS, OEB_STYLES
 from calibre.ebooks.oeb.polish.check.base import WARN, run_checkers
@@ -24,22 +22,23 @@ from calibre.ebooks.oeb.polish.check.parsing import (
 )
 from calibre.ebooks.oeb.polish.cover import is_raster_image
 from calibre.ebooks.oeb.polish.utils import guess_type
-from polyglot.builtins import as_unicode, iteritems
+from polyglot.builtins import as_unicode
 
 XML_TYPES = frozenset(map(guess_type, ('a.xml', 'a.svg', 'a.opf', 'a.ncx'))) | {'application/oebps-page-map+xml'}
 
 
 class CSSChecker:
-
     def __init__(self):
         self.jobs = []
 
     def create_job(self, name, raw, line_offset=0, is_declaration=False):
         from calibre.ebooks.oeb.polish.check.css import create_job
+
         self.jobs.append(create_job(name, as_unicode(raw), line_offset, is_declaration))
 
     def __call__(self):
         from calibre.ebooks.oeb.polish.check.css import check_css
+
         if not self.jobs:
             return ()
         return check_css(self.jobs)
@@ -51,7 +50,7 @@ def run_checks(container):
 
     # Check parsing
     xml_items, html_items, raster_images, stylesheets = [], [], [], []
-    for name, mt in iteritems(container.mime_map):
+    for name, mt in container.mime_map.items():
         items = None
         decode = False
         if mt in XML_TYPES:
@@ -65,8 +64,8 @@ def run_checks(container):
             items = raster_images
         if items is not None:
             items.append((name, mt, container.raw_data(name, decode=decode)))
-    if container.book_type == 'epub':
-        errors.extend(run_checkers(check_html_size, html_items))
+    if container.MAX_HTML_FILE_SIZE:
+        errors.extend(run_checkers(partial(check_html_size, max_size=container.MAX_HTML_FILE_SIZE), html_items))
     errors.extend(run_checkers(check_xml_parsing, xml_items))
     errors.extend(run_checkers(check_xml_parsing, html_items))
     errors.extend(run_checkers(check_raster_images, raster_images))
@@ -117,9 +116,10 @@ CSSFix = namedtuple('CSSFix', 'original_css elem attribute')
 
 def fix_css(container):
     from calibre.ebooks.oeb.polish.check.css import create_job, pool
-    jobs  = []
 
-    for name, mt in iteritems(container.mime_map):
+    jobs = []
+
+    for name, mt in container.mime_map.items():
         if mt in OEB_STYLES:
             css = container.raw_data(name, decode=True)
             jobs.append(create_job(name, css, fix_data=CSSFix(css, None, '')))

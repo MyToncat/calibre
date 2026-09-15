@@ -1,31 +1,46 @@
 #!/usr/bin/env python
-
-
-__license__   = 'GPL v3'
-__copyright__ = '2011, Kovid Goyal <kovid@kovidgoyal.net>'
-__docformat__ = 'restructuredtext en'
+# License: GPLv3 Copyright: 2011, Kovid Goyal <kovid@kovidgoyal.net>
 
 import atexit
 import gc
+import http.client
 import os
 import shutil
 import tempfile
 import time
 import unittest
-from functools import partial
+from functools import partial, wraps
 from io import BytesIO
 from threading import Thread
 
 from calibre.srv.utils import ServerLog
 from calibre.utils.resources import get_image_path as I
 from calibre.utils.resources import get_path as P
-from polyglot import http_client
 
 rmtree = partial(shutil.rmtree, ignore_errors=True)
+is_ci = os.environ.get('CI', '').lower() == 'true'
+
+
+def retry(max_attempts=3, delay=0):
+    def decorator(test_func):
+        @wraps(test_func)
+        def wrapper(*args, **kwargs):
+            for attempt in range(max_attempts):
+                try:
+                    return test_func(*args, **kwargs)
+                except AssertionError as e:
+                    if attempt < max_attempts - 1:
+                        print(f'Retry ({attempt + 1}/{max_attempts - 1}) on {test_func} failure with error: {e}')
+                        time.sleep(delay)
+                    else:
+                        raise
+
+        return wrapper
+
+    return decorator
 
 
 class SimpleTest(unittest.TestCase):
-
     longMessage = True
     maxDiff = None
 
@@ -33,7 +48,6 @@ class SimpleTest(unittest.TestCase):
 
 
 class BaseTest(SimpleTest):
-
     def run(self, result=None):
         # we retry failing server tests since they are flaky on CI
         if result is None:
@@ -53,16 +67,21 @@ class BaseTest(SimpleTest):
 
 
 class LibraryBaseTest(BaseTest):
-
     def setUp(self):
         from calibre.utils.recycle_bin import nuke_recycle
+
         nuke_recycle()
         self.library_path = self.mkdtemp()
+        self.objects_to_close = []
         self.create_db(self.library_path)
 
     def tearDown(self):
         from calibre.utils.recycle_bin import restore_recyle
+
         restore_recyle()
+        for x in self.objects_to_close:
+            x.close()
+        self.objects_to_close = []
         gc.collect(), gc.collect()
         try:
             shutil.rmtree(self.library_path)
@@ -80,28 +99,28 @@ class LibraryBaseTest(BaseTest):
     def create_db(self, library_path):
         from calibre.db.cache import Cache
         from calibre.db.legacy import create_backend
+
         d = os.path.dirname
         src = os.path.join(d(d(d(os.path.abspath(__file__)))), 'db', 'tests', 'metadata.db')
         dest = os.path.join(library_path, 'metadata.db')
         shutil.copy2(src, dest)
         db = Cache(create_backend(library_path))
         db.init()
-        db.set_cover({1:I('lt.png', data=True), 2:I('polish.png', data=True)})
+        db.set_cover({1: I('lt.png', data=True), 2: I('polish.png', data=True)})
         db.add_format(1, 'FMT1', BytesIO(b'book1fmt1'), run_hooks=False)
         with open(P('quick_start/eng.epub'), 'rb') as src:
             db.add_format(1, 'EPUB', src, run_hooks=False)
         db.add_format(1, 'FMT2', BytesIO(b'book1fmt2'), run_hooks=False)
         db.add_format(2, 'FMT1', BytesIO(b'book2fmt1'), run_hooks=False)
-        db.backend.conn.close()
+        db.close()
         return dest
 
     def create_server(self, *args, **kwargs):
-        args = (self.library_path ,) + args
+        args = (self.library_path,) + args
         return LibraryServer(*args, **kwargs)
 
 
 class TestServer(Thread):
-
     daemon = True
 
     def __init__(self, handler, plugins=(), **kwargs):
@@ -109,6 +128,7 @@ class TestServer(Thread):
         from calibre.srv.http_response import create_http_handler
         from calibre.srv.loop import ServerLoop
         from calibre.srv.opts import Options
+
         self.setup_defaults(kwargs)
         self.loop = ServerLoop(
             create_http_handler(handler),
@@ -144,29 +164,31 @@ class TestServer(Thread):
             self.log.error('Failed to stop server with error:', e)
         self.join(self.loop.opts.shutdown_timeout)
         self.loop.close_control_connection()
+        self.log.close()
 
     def connect(self, timeout=None, interface=None):
         if timeout is None:
             timeout = self.loop.opts.timeout
         if interface is None:
             interface = self.address[0]
-        ans = http_client.HTTPConnection(interface, self.address[1], timeout=timeout)
+        ans = http.client.HTTPConnection(interface, self.address[1], timeout=timeout)
         ans.connect()
         return ans
 
     def change_handler(self, handler):
         from calibre.srv.http_response import create_http_handler
+
         self.loop.handler = create_http_handler(handler)
 
 
 class LibraryServer(TestServer):
-
     def __init__(self, library_path, libraries=(), plugins=(), **kwargs):
         Thread.__init__(self, name='ServerMain')
         from calibre.srv.handler import Handler
         from calibre.srv.http_response import create_http_handler
         from calibre.srv.loop import ServerLoop
         from calibre.srv.opts import Options
+
         self.setup_defaults(kwargs)
         opts = Options(**kwargs)
         self.libraries = libraries or (library_path,)

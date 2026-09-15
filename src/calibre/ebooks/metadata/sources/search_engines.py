@@ -17,9 +17,9 @@ from threading import Lock
 try:
     from urllib.parse import parse_qs, quote, quote_plus, urlencode, urlparse
 except ImportError:
-    from urllib import quote, quote_plus, urlencode
+    from urllib import quote, quote_plus, urlencode  # type: ignore
 
-    from urlparse import parse_qs, urlparse
+    from urlparse import parse_qs, urlparse  # type: ignore
 
 from lxml import etree
 
@@ -31,12 +31,11 @@ from calibre.ebooks.chardet import xml_to_unicode
 from calibre.utils.lock import ExclusiveFile
 from calibre.utils.random_ua import accept_header_for_ua
 
-current_version = (1, 2, 5)
+current_version = (1, 2, 15)
 minimum_calibre_version = (2, 80, 0)
 webcache = {}
 webcache_lock = Lock()
 prints = partial(safe_print, file=sys.stderr)
-
 
 Result = namedtuple('Result', 'url title cached_url')
 
@@ -80,7 +79,10 @@ def browser():
 
 def encode_query(**query):
     q = {k.encode('utf-8'): v.encode('utf-8') for k, v in query.items()}
-    return urlencode(q).decode('utf-8')
+    ans = urlencode(q)
+    if isinstance(ans, bytes):
+        return ans.decode('utf-8')
+    return ans
 
 
 def parse_html(raw):
@@ -89,6 +91,7 @@ def parse_html(raw):
     except ImportError:
         # Old versions of calibre
         import html5lib
+
         return html5lib.parse(raw, treebuilder='lxml', namespaceHTMLElements=False)
     else:
         return parse(raw)
@@ -116,7 +119,7 @@ def quote_term(x):
     return ans
 
 
-# DDG + Wayback machine {{{
+# DDG + Wayback machine DDG does a captcha after 2-3 requests {{{
 
 
 def ddg_url_processor(url):
@@ -135,15 +138,25 @@ def ddg_term(t):
 def ddg_href(url):
     if url.startswith('/'):
         q = url.partition('?')[2]
-        url = parse_qs(q.encode('utf-8'))['uddg'][0].decode('utf-8')
+        url = parse_qs(q.encode('utf-8'))[b'uddg'][0].decode('utf-8')
     return url
 
 
 def wayback_machine_cached_url(url, br=None, log=prints, timeout=60):
     q = quote_term(url)
     br = br or browser()
-    data = query(br, 'https://archive.org/wayback/available?url=' +
-                 q, 'wayback', parser=json.loads, limit=0.25, timeout=timeout)
+    try:
+        data = query(
+            br,
+            'https://archive.org/wayback/available?url=' + q,
+            'wayback',
+            parser=json.loads,
+            limit=0.25,
+            timeout=timeout,
+        )
+    except Exception as e:
+        log('Wayback machine query failed for url: ' + url + ' with error: ' + str(e))
+        return None
     try:
         closest = data['archived_snapshots']['closest']
         if closest['available']:
@@ -154,6 +167,7 @@ def wayback_machine_cached_url(url, br=None, log=prints, timeout=60):
     except Exception:
         pass
     from pprint import pformat
+
     log('Response from wayback machine:', pformat(data))
 
 
@@ -161,11 +175,11 @@ def wayback_url_processor(url):
     if url.startswith('/'):
         # Use original URL instead of absolutizing to wayback URL as wayback is
         # slow
-        m = re.search('https?:', url)
+        m = re.search(r'https?:', url)
         if m is None:
             url = 'https://web.archive.org' + url
         else:
-            url = url[m.start():]
+            url = url[m.start() :]
     return url
 
 
@@ -178,10 +192,10 @@ def ddg_search(terms, site=None, br=None, log=prints, safe_search=False, dump_ra
     if site is not None:
         terms.append(quote_term(('site:' + site)))
     q = '+'.join(terms)
-    url = 'https://duckduckgo.com/html/?q={q}&kp={kp}'.format(
-        q=q, kp=1 if safe_search else -1)
+    url = 'https://duckduckgo.com/html/?q={q}&kp={kp}'.format(q=q, kp=1 if safe_search else -1)
     log('Making ddg query: ' + url)
     from calibre.scraper.simple import read_url
+
     br = br or browser()
     root = query(br, url, 'ddg', dump_raw, timeout=timeout, simple_scraper=partial(read_url, ddg_scraper_storage))
     ans = []
@@ -201,9 +215,11 @@ def ddg_develop():
             print(' ', result.url)
             print(' ', get_cached_url(result.url, br))
             print()
+
+
 # }}}
 
-# Bing {{{
+# Bing uses a CAPTCHA {{{
 
 
 def bing_term(t):
@@ -217,7 +233,30 @@ def bing_url_processor(url):
     return url
 
 
-def bing_search(terms, site=None, br=None, log=prints, safe_search=False, dump_raw=None, timeout=60, show_user_agent=False):
+def resolve_bing_wrapper_page(url, br, log):
+    raw = br.open_novisit(url).read().decode('utf-8', 'replace')
+    m = re.search(r'var u = "(.+)"', raw)
+    if m is None:
+        log('Failed to resolve bing wrapper page for url: ' + url)
+        return url
+    log('Resolved bing wrapped URL: ' + url + ' to ' + m.group(1))
+    return m.group(1)
+
+
+bing_scraper_storage = []
+
+
+def bing_search(
+    terms,
+    site=None,
+    br=None,
+    log=prints,
+    safe_search=False,
+    dump_raw=None,
+    timeout=60,
+    show_user_agent=False,
+    result_url_is_ok=lambda x: True,
+):
     # http://vlaurie.com/computers2/Articles/bing_advanced_search.htm
     terms = [quote_term(bing_term(t)) for t in terms]
     if site is not None:
@@ -225,47 +264,43 @@ def bing_search(terms, site=None, br=None, log=prints, safe_search=False, dump_r
     q = '+'.join(terms)
     url = 'https://www.bing.com/search?q={q}'.format(q=q)
     log('Making bing query: ' + url)
-    br = br or browser()
-    br.addheaders = [x for x in br.addheaders if x[0].lower() != 'user-agent']
-    ua = ''
-    from calibre.utils.random_ua import random_common_chrome_user_agent
-    while not ua or 'Edg/' in ua:
-        ua = random_common_chrome_user_agent()
-    if show_user_agent:
-        print('User-agent:', ua)
-    br.addheaders.append(('User-agent', ua))
+    from calibre.scraper.simple import read_url
 
-    root = query(br, url, 'bing', dump_raw, timeout=timeout)
+    root = query(br, url, 'bing', dump_raw, timeout=timeout, simple_scraper=partial(read_url, bing_scraper_storage))
     ans = []
-    for li in root.xpath('//*[@id="b_results"]/li[@class="b_algo"]'):
+    result_items = root.xpath('//*[@id="b_results"]/li[@class="b_algo"]')
+    if not result_items:
+        log('Bing returned no results')
+        return ans, url
+    for li in result_items:
         a = li.xpath('descendant::h2/a[@href]') or li.xpath('descendant::div[@class="b_algoheader"]/a[@href]')
         a = a[0]
         title = tostring(a)
-        try:
-            div = li.xpath('descendant::div[@class="b_attribution" and @u]')[0]
-        except IndexError:
-            log('Ignoring {!r} as it has no cached page'.format(title))
-            continue
-        d, w = div.get('u').split('|')[-2:]
-        cached_url = 'https://cc.bingj.com/cache.aspx?q={q}&d={d}&mkt=en-US&setlang=en-US&w={w}'.format(
-            q=q, d=d, w=w)
-        ans.append(Result(a.get('href'), title, cached_url))
+        ans_url = a.get('href')
+        if ans_url.startswith('https://www.bing.com/'):
+            ans_url = resolve_bing_wrapper_page(ans_url, br, log)
+        if result_url_is_ok(ans_url):
+            ans.append(Result(ans_url, title, None))
     if not ans:
         title = ' '.join(root.xpath('//title/text()'))
         log('Failed to find any results on results page, with title:', title)
     return ans, url
 
 
-def bing_develop():
-    for result in bing_search('heroes abercrombie'.split(), 'www.amazon.com', dump_raw='/t/raw.html', show_user_agent=True)[0]:
+def bing_develop(terms='heroes abercrombie'):
+    if isinstance(terms, str):
+        terms = terms.split()
+    for result in bing_search(terms, 'www.amazon.com', dump_raw='/t/raw.html', show_user_agent=True)[0]:
         if '/dp/' in result.url:
             print(result.title)
             print(' ', result.url)
             print(' ', result.cached_url)
             print()
+
+
 # }}}
 
-# Google {{{
+# Google only serves JS enabled search pages as of Sep 11, 2025 {{{
 
 
 def google_term(t):
@@ -289,6 +324,7 @@ def google_cache_url_for_url(url):
 
 
 def google_get_cached_url(url, br=None, log=prints, timeout=60):
+    # Google's webcache was discontinued in september 2024
     cached_url = google_cache_url_for_url(url)
     br = google_specialize_browser(br or browser())
     try:
@@ -314,21 +350,26 @@ def canonicalize_url_for_cache_map(url):
 def google_parse_results(root, raw, log=prints, ignore_uncached=True):
     ans = []
     seen = set()
-    for div in root.xpath('//*[@id="search"]//*[@id="rso"]//div[descendant::h3]'):
-        try:
-            a = div.xpath('descendant::a[@href]')[0]
-        except IndexError:
-            log('Ignoring div with no main result link')
+    for a in root.xpath('//a[@href]'):
+        href = a.get('href')
+        if not href.startswith('/url?q=http'):
             continue
-        title = tostring(a)
-        src_url = a.get('href')
-        # print(f'{src_url=}')
-        curl = canonicalize_url_for_cache_map(src_url)
+        try:
+            url = parse_qs(urlparse(href).query)['q'][0]
+            purl = urlparse(url)
+        except Exception:
+            continue
+        if purl.hostname.endswith('google.com'):
+            continue
+        try:
+            title = tostring(next(a.iterchildren('span')))
+        except StopIteration:
+            continue
+        curl = canonicalize_url_for_cache_map(url)
         if curl in seen:
             continue
         seen.add(curl)
-        cached_url = google_cache_url_for_url(curl)
-        ans.append(Result(a.get('href'), title, cached_url))
+        ans.append(Result(curl, title, None))
     if not ans:
         title = ' '.join(root.xpath('//title/text()'))
         log('Failed to find any results on results page, with title:', title)
@@ -339,6 +380,7 @@ def google_consent_cookies():
     # See https://github.com/benbusby/whoogle-search/pull/1054 for cookies
     from base64 import standard_b64encode
     from datetime import date
+
     base = {'domain': '.google.com', 'path': '/'}
     b = base.copy()
     b['name'], b['value'] = 'CONSENT', 'PENDING+987'
@@ -356,6 +398,8 @@ def google_specialize_browser(br):
             for c in google_consent_cookies():
                 br.set_simple_cookie(c['name'], c['value'], c['domain'], path=c['path'])
             br.google_consent_cookie_added = True
+    # google serves JS based pages without the right user agent
+    br.set_user_agent('Lynx/2.8.6rel.5 libwww-FM/2.14')  # noqa
     return br
 
 
@@ -365,6 +409,7 @@ def is_probably_book_asin(t):
 
 def is_asin_or_isbn(t):
     from calibre.ebooks.metadata import check_isbn
+
     return bool(check_isbn(t) or is_probably_book_asin(t))
 
 
@@ -379,8 +424,9 @@ def google_format_query(terms, site=None, tbm=None):
         terms.append(quote_term(('site:' + site)))
     q = '+'.join(terms)
     url = 'https://www.google.com/search?q={q}'.format(q=q)
-    if tbm:
-        url += '&tbm=' + tbm
+    # tbm causes 403 forbidden errors
+    # if tbm:
+    #     url += '&tbm=' + tbm
     if prevent_spelling_correction:
         url += '&nfpr=1'
     return url
@@ -409,11 +455,98 @@ def google_develop(search_terms='1423146786', raw_from=''):
             print(' ', result.url)
             print(' ', result.cached_url)
             print()
+
+
+# }}}
+
+
+# Yandex uses a CAPTCHA {{{
+def yandex_term(t):
+    t = t.replace('"', '')
+    if t in {'OR', 'AND', 'NOT'}:
+        t = t.lower()
+    return t
+
+
+def yandex_format_query(terms, site=None):
+    terms = [quote_term(yandex_term(t)) for t in terms]
+    if site is not None:
+        terms.append(quote_term(('site:' + site)))
+    q = '+'.join(terms)
+    url = 'https://yandex.com/search?text={q}'.format(q=q)
+    return url
+
+
+def yandex_parse_results(root, raw, log=prints, ignore_uncached=True):
+    pass
+
+
+yandex_scraper_storage = []
+
+
+def yandex_search(terms, site=None, br=None, dump_raw=None, log=prints, timeout=60):
+    # Sadly yandex uses CAPTCHAs aggresively
+    url = yandex_format_query(terms, site)
+    br = browser()
+    r = []
+    from calibre.scraper.simple import read_url
+
+    root = query(
+        br,
+        url,
+        'yandex',
+        dump_raw,
+        timeout=timeout,
+        save_raw=r.append,
+        simple_scraper=partial(read_url, yandex_scraper_storage),
+    )
+    return yandex_parse_results(root, r[0], log=log), url
+
+
+def yandex_develop(search_terms='1423146786', raw_from=''):
+    if raw_from:
+        with open(raw_from, 'rb') as f:
+            raw = f.read()
+        results = yandex_parse_results(parse_html(raw), raw)
+    else:
+        results = yandex_search(search_terms.split(), 'www.amazon.com', dump_raw='/t/raw.html')[0]
+    for result in results:
+        if '/dp/' in result.url:
+            print(result.title)
+            print(' ', result.url)
+            print(' ', result.cached_url)
+            print()
+
+
 # }}}
 
 
 def get_cached_url(url, br=None, log=prints, timeout=60):
-    return google_get_cached_url(url, br, log, timeout) or wayback_machine_cached_url(url, br, log, timeout)
+    from threading import Lock, Thread
+
+    from polyglot.queue import Queue
+
+    print_lock = Lock()
+    q = Queue()
+
+    def safe_print(*a):
+        with print_lock:
+            log(*a)
+
+    def doit(func):
+        try:
+            q.put(func(url, br, safe_print, timeout))
+        except Exception as e:
+            safe_print(e)
+        q.put(None)
+
+    threads = []
+    threads.append(Thread(target=doit, args=(wayback_machine_cached_url,), daemon=True).start())
+    while threads:
+        x = q.get()
+        if x is not None:
+            return x
+        threads.pop()
 
 
 def get_data_for_cached_url(url):

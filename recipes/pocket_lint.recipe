@@ -4,7 +4,7 @@ from calibre.web.feeds.news import BasicNewsRecipe
 
 
 class AdvancedUserRecipe1718387215(BasicNewsRecipe):
-    title          = 'Pocket-lint'
+    title = 'Pocket-lint'
     language = 'en'
     __author__ = 'Spicy Poison'
     description = 'Pocket-lint have been geeking out over the intersection of devices, lifestyle hardware, and entertainment news.'
@@ -17,15 +17,15 @@ class AdvancedUserRecipe1718387215(BasicNewsRecipe):
     encoding = 'utf-8'
     masthead_url = 'https://www.valnetinc.com/images/brand/pl-logo-full-colored-dark.svg'
     remove_empty_feeds = True
-    auto_cleanup   = True
+    auto_cleanup = True
 
-    feeds          = [
-        #Segments
+    feeds = [
+        # Segments
         ('Devices', 'https://www.pocket-lint.com/feed/devices-segment/'),
         ('Entertainment', 'https://www.pocket-lint.com/feed/entertainment-segment/'),
         ('Lifestyle', 'https://www.pocket-lint.com/feed/lifestyle-segment/'),
         ('Audio Video', 'https://www.pocket-lint.com/feed/audio-video-segment/'),
-        #Segments
+        # Segments
         ('News', 'https://www.pocket-lint.com/feed/news/'),
         ('Features', 'https://www.pocket-lint.com/feed/features/'),
         ('Editorials', 'https://www.pocket-lint.com/feed/editorials/'),
@@ -33,13 +33,13 @@ class AdvancedUserRecipe1718387215(BasicNewsRecipe):
         ('Lists', 'https://www.pocket-lint.com/feed/lists/'),
         ('Guides', 'https://www.pocket-lint.com/feed/guides/'),
         ('Hubs', 'https://www.pocket-lint.com/feed/hubs/'),
-        #Best Products
+        # Best Products
         ('Reviews', 'https://www.pocket-lint.com/feed/reviews/'),
         ('Buyer’s Guides', 'https://www.pocket-lint.com/feed/buyers-guides/'),
         ('Comparisons', 'https://www.pocket-lint.com/feed/comparisons/'),
         ('Gift Guides', 'https://www.pocket-lint.com/feed/gift-guides/'),
         ('Deals', 'https://www.pocket-lint.com/feed/deals/'),
-        #Topics
+        # Topics
         ('Apps', 'https://www.pocket-lint.com/feed/apps/'),
         ('Augmented Reality & Virtual Reality', 'https://www.pocket-lint.com/feed/ar-vr/'),
         ('Cameras', 'https://www.pocket-lint.com/feed/cameras/'),
@@ -57,6 +57,5 @@ class AdvancedUserRecipe1718387215(BasicNewsRecipe):
         ('Speakers', 'https://www.pocket-lint.com/feed/speakers/'),
         ('Tablets', 'https://www.pocket-lint.com/feed/tablets/'),
         ('TVs', 'https://www.pocket-lint.com/feed/tv/'),
-
         ('Pocket-lint Awards', 'https://www.pocket-lint.com/feed/awards/'),
     ]

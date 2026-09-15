@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# vim:fileencoding=utf-8
 
 
 __license__ = 'GPL v3'
@@ -46,7 +45,7 @@ def build_manual(language, base):
     sb = partial(sphinx_build, language, base)
     onlinedir = sb(t='online')
     epubdir = sb('myepub', 'epub')
-    pdf_ok = language not in ('ja',)
+    pdf_ok = language not in ('ja', 'ar')
     if pdf_ok:
         latexdir = sb('latex', 'latex')
         pwd = os.getcwd()
@@ -54,8 +53,10 @@ def build_manual(language, base):
 
         def run_cmd(cmd):
             p = subprocess.Popen(cmd, stdout=open(os.devnull, 'wb'), stdin=subprocess.PIPE)
+            assert p.stdin is not None
             p.stdin.close()
             return p.wait()
+
         try:
             for i in range(3):
                 run_cmd(['xelatex', '-interaction=nonstopmode', 'calibre.tex'])
@@ -96,6 +97,7 @@ def build_man_pages(language, base):
 
 if __name__ == '__main__':
     import argparse
+
     os.chdir(d(a(__file__)))
     os.environ['__appname__'] = __appname__
     os.environ['__version__'] = __version__
@@ -104,6 +106,7 @@ if __name__ == '__main__':
         os.environ['CALIBRE_OVERRIDE_LANG'] = language = 'en'
         if 'ALL_USER_MANUAL_LANGUAGES' not in os.environ:
             import json
+
             os.environ['ALL_USER_MANUAL_LANGUAGES'] = ' '.join(json.load(open('locale/completed.json', 'rb')))
         sphinx_build(language, base, t='online', quiet=False)
         print('Manual built in', j(base, 'html'))

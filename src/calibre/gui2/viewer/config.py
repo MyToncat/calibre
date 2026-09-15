@@ -20,12 +20,45 @@ vprefs.defaults['old_prefs_migrated'] = False
 vprefs.defaults['bookmarks_sort'] = 'title'
 vprefs.defaults['highlight_export_format'] = 'txt'
 vprefs.defaults['auto_update_lookup'] = True
+vprefs.defaults['saved_window_sizes'] = {}
+
+
+def saved_window_sizes() -> dict[str, tuple[int, int]]:
+    ans = {}
+    for name, size in (vprefs['saved_window_sizes'] or {}).items():
+        try:
+            width, height = map(int, size)
+        except Exception:
+            continue
+        if width > 0 and height > 0:
+            ans[name] = width, height
+    return ans
+
+
+def save_window_size(name: str, size: tuple[int, int] | None) -> None:
+    "Save size under name, or, when size is None, delete the size saved under name"
+    sizes = saved_window_sizes()
+    if size is None:
+        sizes.pop(name, None)
+    else:
+        sizes[name] = int(size[0]), int(size[1])
+    vprefs['saved_window_sizes'] = sizes
 
 
 def get_session_pref(name, default=None, group='standalone_misc_settings'):
     sd = vprefs['session_data']
     g = sd.get(group, {}) if group else sd
     return g.get(name, default)
+
+
+def set_session_pref(name, val=None, group='standalone_misc_settings'):
+    sd = vprefs['session_data']
+    g = sd.get(group, {}) if group else sd
+    if val is None:
+        g.pop(name, None)
+    else:
+        g[name] = val
+    vprefs['session_data'] = sd
 
 
 def get_pref_group(name):
@@ -68,12 +101,25 @@ def save_reading_rates(key, rates):
         atomic_rename(f.name, path)
     except Exception:
         import traceback
+
         traceback.print_exc()
 
 
 def load_reading_rates(key):
     existing = get_existing_reading_rates()
     return existing.get(key)
+
+
+def delete_all_reading_rates():
+    path = reading_rates_path()
+    try:
+        os.remove(path)
+    except FileNotFoundError:
+        pass
+    except OSError:
+        import traceback
+
+        traceback.print_exc()
 
 
 def expand_profile_user_names(user_names):
@@ -112,6 +158,7 @@ def save_viewer_profile(profile_name, profile, *user_names: str):
     if isinstance(profile, dict):
         profile['__timestamp__'] = isoformat(utcnow())
         from calibre.gui2.viewer.toolbars import DEFAULT_ACTIONS, current_actions
+
         ca = current_actions()
         s = {}
         if ca != DEFAULT_ACTIONS:
@@ -126,8 +173,7 @@ def save_viewer_profile(profile_name, profile, *user_names: str):
     for name in user_names:
         if isinstance(profile, dict):
             raw.setdefault(name, {})[profile_name] = profile
-        else:
-            if name in raw:
-                raw[name].pop(profile_name, None)
+        elif name in raw:
+            raw[name].pop(profile_name, None)
     with open(os.path.join(viewer_config_dir, 'profiles.json'), 'wb') as f:
         f.write(json.dumps(raw, indent=2, sort_keys=True).encode())

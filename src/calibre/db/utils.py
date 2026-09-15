@@ -1,24 +1,31 @@
 #!/usr/bin/env python
-
-
-__license__ = 'GPL v3'
-__copyright__ = '2013, Kovid Goyal <kovid at kovidgoyal.net>'
+# License: GPLv3 Copyright: 2013, Kovid Goyal <kovid at kovidgoyal.net>
 
 import errno
 import os
 import re
 import shutil
 import sys
+import tempfile
 from collections import OrderedDict, namedtuple
 from contextlib import suppress
 from locale import localeconv
-from threading import Lock
+from threading import RLock
 
 from calibre import as_unicode, prints
 from calibre.constants import cache_dir, get_windows_number_formats, iswindows, preferred_encoding
+from calibre.utils.filenames import make_long_path_useable
 from calibre.utils.icu import lower as icu_lower
-from calibre.utils.localization import canonicalize_lang
-from polyglot.builtins import iteritems, itervalues, string_or_bytes
+from calibre.utils.localization import _, canonicalize_lang, ngettext
+
+
+def atomic_write(path: str, data: str | bytes) -> None:
+    mode = 'w' if isinstance(data, str) else 'wb'
+    dpath = make_long_path_useable(os.path.dirname(path))
+    os.makedirs(dpath, exist_ok=True)
+    with tempfile.NamedTemporaryFile(mode, delete=False, dir=dpath) as f:
+        f.write(data)
+    os.replace(make_long_path_useable(f.name), make_long_path_useable(path))
 
 
 def force_to_bool(val):
@@ -35,7 +42,7 @@ def force_to_bool(val):
                 val = False
             else:
                 val = bool(int(val))
-        except:
+        except Exception:
             val = None
     return val
 
@@ -47,14 +54,10 @@ def fuzzy_title_patterns():
     global _fuzzy_title_patterns
     if _fuzzy_title_patterns is None:
         from calibre.ebooks.metadata import get_title_sort_pat
-        _fuzzy_title_patterns = tuple((re.compile(pat, re.IGNORECASE) if
-            isinstance(pat, string_or_bytes) else pat, repl) for pat, repl in
-                [
-                    (r'[\[\](){}<>\'";,:#]', ''),
-                    (get_title_sort_pat(), ''),
-                    (r'[-._]', ' '),
-                    (r'\s+', ' ')
-                ]
+
+        _fuzzy_title_patterns = tuple(
+            (re.compile(pat, re.IGNORECASE) if isinstance(pat, (str, bytes)) else pat, repl)
+            for pat, repl in [(r'[\[\](){}<>\'";,:#]', ''), (get_title_sort_pat(), ''), (r'[-._]', ' '), (r'\s+', ' ')]
         )
     return _fuzzy_title_patterns
 
@@ -82,6 +85,8 @@ def find_identical_books(mi, data):
             return set()
 
     ans = set()
+    if found_books is None:
+        return ans
     titleq = fuzzy_title(mi.title)
     for book_id in found_books:
         title = title_map.get(book_id, '')
@@ -107,18 +112,18 @@ class CacheError(Exception):
 
 
 class ThumbnailCache:
+    "This is a persistent disk cache to speed up loading and resizing of covers"
 
-    ' This is a persistent disk cache to speed up loading and resizing of covers '
-
-    def __init__(self,
-                 max_size=1024,  # The maximum disk space in MB
-                 name='thumbnail-cache',  # The name of this cache (should be unique in location)
-                 thumbnail_size=(100, 100),   # The size of the thumbnails, can be changed
-                 location=None,   # The location for this cache, if None cache_dir() is used
-                 test_mode=False,  # Used for testing
-                 min_disk_cache=0, # If the size is set less than or equal to this value, the cache is disabled.
-                 version=0 # Increase this if the cache content format might have changed.
-                 ):
+    def __init__(
+        self,
+        max_size=1024,  # The maximum disk space in MB
+        name='thumbnail-cache',  # The name of this cache (should be unique in location)
+        thumbnail_size=(100, 100),  # The size of the thumbnails, can be changed
+        location=None,  # The location for this cache, if None cache_dir() is used
+        test_mode=False,  # Used for testing
+        min_disk_cache=0,  # If the size is set less than or equal to this value, the cache is disabled.
+        version=0,  # Increase this if the cache content format might have changed.
+    ):
         self.version = version
         self.location = os.path.join(location or cache_dir(), name)
         if max_size <= min_disk_cache:
@@ -127,16 +132,15 @@ class ThumbnailCache:
         self.group_id = 'group'
         self.thumbnail_size = thumbnail_size
         self.size_changed = False
-        self.lock = Lock()
+        self.lock = RLock()
         self.min_disk_cache = min_disk_cache
-        if test_mode:
-            self.log = self.fail_on_error
+        self.log = self.fail_on_error if test_mode else self._log
 
-    def log(self, *args, **kwargs):
+    def _log(self, *args, **kwargs) -> None:
         kwargs['file'] = sys.stderr
         prints(*args, **kwargs)
 
-    def fail_on_error(self, *args, **kwargs):
+    def fail_on_error(self, *args, **kwargs) -> None:
         msg = ' '.join(args)
         raise CacheError(msg)
 
@@ -147,10 +151,10 @@ class ThumbnailCache:
             self.log('Failed to delete cached thumbnail file:', as_unicode(err))
 
     def _load_index(self):
-        '''
+        """
         Load the index, automatically removing incorrectly sized thumbnails and
         pruning to fit max_size
-        '''
+        """
 
         # Remove the cache if it isn't the current version
         version_path = os.path.join(self.location, 'version')
@@ -180,10 +184,13 @@ class ThumbnailCache:
                 return os.listdir(os.path.join(*args))
             except OSError:
                 return ()  # not a directory or no permission or whatever
-        entries = ('/'.join((parent, subdir, entry))
-                   for parent in listdir(self.location)
-                   for subdir in listdir(self.location, parent)
-                   for entry in listdir(self.location, parent, subdir))
+
+        entries = (
+            '/'.join((parent, subdir, entry))
+            for parent in listdir(self.location)
+            for subdir in listdir(self.location, parent)
+            for entry in listdir(self.location, parent, subdir)
+        )
 
         invalidate = set()
         try:
@@ -198,13 +205,15 @@ class ThumbnailCache:
             except OSError as err:
                 self.log('Failed to remove thumbnail invalidate data:', as_unicode(err))
             else:
+
                 def record(line):
                     try:
                         uuid, book_id = line.partition(' ')[0::2]
                         book_id = int(book_id)
-                        return (uuid, book_id)
+                        return uuid, book_id
                     except Exception:
                         return None
+
                 invalidate = {record(x) for x in raw.splitlines()}
         items = []
         try:
@@ -214,7 +223,7 @@ class ThumbnailCache:
                     book_id, timestamp, size, thumbnail_size = name.split('-')
                     book_id, timestamp, size = int(book_id), float(timestamp), int(size)
                     thumbnail_size = tuple(map(int, thumbnail_size.partition('x')[0::2]))
-                except (ValueError, TypeError, IndexError, KeyError, AttributeError):
+                except ValueError, TypeError, IndexError, KeyError, AttributeError:
                     continue
                 key = (uuid, book_id)
                 path = os.path.join(self.location, entry)
@@ -226,13 +235,13 @@ class ThumbnailCache:
         except OSError as err:
             self.log('Failed to read thumbnail cache dir:', as_unicode(err))
 
-        self.items = OrderedDict(sorted(items, key=lambda x:order.get(x[0], 0)))
+        self.items = OrderedDict(sorted(items, key=lambda x: order.get(x[0], 0)))
         self._apply_size()
 
     def _invalidate_sizes(self):
         if self.size_changed:
             size = self.thumbnail_size
-            remove = tuple(key for key, entry in iteritems(self.items) if size != entry.thumbnail_size)
+            remove = tuple(key for key, entry in self.items.items() if size != entry.thumbnail_size)
             for key in remove:
                 self._remove(key)
             self.size_changed = False
@@ -249,15 +258,6 @@ class ThumbnailCache:
             self._do_delete(entry.path)
             self.total_size -= entry.size
 
-    def _write_order(self):
-        if hasattr(self, 'items'):
-            try:
-                data = '\n'.join(group_id + ' ' + str(book_id) for (group_id, book_id) in self.items)
-                with open(os.path.join(self.location, 'order'), 'wb') as f:
-                    f.write(data.encode('utf-8'))
-            except OSError as err:
-                self.log('Failed to save thumbnail cache order:', as_unicode(err))
-
     def _read_order(self):
         order = {}
         try:
@@ -273,7 +273,14 @@ class ThumbnailCache:
 
     def shutdown(self):
         with self.lock:
-            self._write_order()
+            if (items := getattr(self, 'items', None)) is not None:
+                del self.items
+                try:
+                    data = '\n'.join(group_id + ' ' + str(book_id) for (group_id, book_id) in items)
+                    with open(os.path.join(self.location, 'order'), 'wb') as f:
+                        f.write(data.encode('utf-8'))
+                except OSError as err:
+                    self.log('Failed to save thumbnail cache order:', as_unicode(err))
 
     def set_group_id(self, group_id):
         with self.lock:
@@ -295,10 +302,8 @@ class ThumbnailCache:
             if not hasattr(self, 'total_size'):
                 self._load_index()
             self._invalidate_sizes()
-            ts = ('%.2f' % timestamp).replace('.00', '')
-            path = '%s%s%s%s%d-%s-%d-%dx%d' % (
-                self.group_id, os.sep, book_id % 100, os.sep,
-                book_id, ts, len(data), self.thumbnail_size[0], self.thumbnail_size[1])
+            ts = (f'{timestamp:.2f}').replace('.00', '')
+            path = f'{self.group_id}{os.sep}{book_id % 100}{os.sep}{book_id}-{ts}-{len(data)}-{self.thumbnail_size[0]}x{self.thumbnail_size[1]}'
             path = os.path.join(self.location, path)
             key = (self.group_id, book_id)
             e = self.items.pop(key, None)
@@ -372,7 +377,7 @@ class ThumbnailCache:
                     self._remove((self.group_id, book_id))
             elif os.path.exists(self.location):
                 try:
-                    raw = '\n'.join('%s %d' % (self.group_id, book_id) for book_id in book_ids)
+                    raw = '\n'.join(f'{self.group_id} {book_id}' for book_id in book_ids)
                     with open(os.path.join(self.location, 'invalidate'), 'ab') as f:
                         f.write(raw.encode('ascii'))
                 except OSError as err:
@@ -393,7 +398,7 @@ class ThumbnailCache:
                 pass
             if not hasattr(self, 'total_size'):
                 self._load_index()
-            for entry in itervalues(self.items):
+            for entry in self.items.values():
                 self._do_delete(entry.path)
             self.total_size = 0
             self.items = OrderedDict()
@@ -405,10 +410,12 @@ class ThumbnailCache:
         if size_in_mb <= self.min_disk_cache:
             size_in_mb = 0
         size_in_mb = max(0, size_in_mb)
+        new_size = int(size_in_mb * (1024**2))
         with self.lock:
-            self.max_size = int(size_in_mb * (1024**2))
-            if hasattr(self, 'total_size'):
-                self._apply_size()
+            if new_size != self.max_size:
+                self.max_size = new_size
+                if hasattr(self, 'total_size'):
+                    self._apply_size()
 
 
 number_separators = None
@@ -434,8 +441,10 @@ def atof(string):
 
 def type_safe_sort_key_function(keyfunc=None):
     if keyfunc is None:
+
         def keyfunc(x):
             return x
+
     sentinel = object()
     first_value = sentinel
 
@@ -463,24 +472,23 @@ def human_readable_interval(secs):
     seconds = secs % 60
     parts = []
     if days > 0:
-        parts.append(_('{} days').format(days))
+        parts.append(ngettext('1 day', '{} days', days).format(days))
         if hours > 0:
-            parts.append(_('{} hours').format(hours))
+            parts.append(ngettext('1 hour', '{} hours', hours).format(hours))
     elif hours > 0:
-        parts.append(_('{} hours').format(hours))
+        parts.append(ngettext('1 hour', '{} hours', hours).format(hours))
         if minutes > 0:
-            parts.append(_('{} minutes').format(minutes))
+            parts.append(ngettext('1 minute', '{} minutes', minutes).format(minutes))
     elif minutes > 0:
-        parts.append(_('{} minutes').format(minutes))
+        parts.append(ngettext('1 minute', '{} minutes', minutes).format(minutes))
         if secs > 0:
-            parts.append(_('{} seconds').format(seconds))
+            parts.append(ngettext('1 second', '{} seconds', seconds).format(seconds))
     elif secs > 0:
-        parts.append(_('{} seconds').format(seconds))
+        parts.append(ngettext('1 second', '{} seconds', seconds).format(seconds))
     return ' '.join(parts)
 
 
 class IndexingProgress:
-
     def __init__(self):
         self.reset()
 

@@ -1,22 +1,21 @@
 #!/usr/bin/env python
 # License: GPL v3 Copyright: 2022, Kovid Goyal <kovid at kovidgoyal.net>
 
-
 import errno
 import mmap
 import os
 import secrets
 import stat
 import struct
-from typing import Optional, Union
 
 from calibre.constants import ismacos, iswindows
 
 SHM_NAME_MAX = 30 if ismacos else 254
+_MmapType = mmap.mmap
 if iswindows:
     import _winapi
 else:
-    import _posixshmem
+    import _posixshmem  # type: ignore
 
 
 def make_filename(prefix: str) -> str:
@@ -36,23 +35,27 @@ def make_filename(prefix: str) -> str:
 
 
 class SharedMemory:
-    '''
+    """
     Create or access randomly named shared memory. To create call with empty name and specific size.
     To access call with name only.
 
     WARNING: The actual size of the shared memory may be larger than the requested size.
-    '''
+    """
+
     _fd: int = -1
     _name: str = ''
-    _mmap: Optional[mmap.mmap] = None
+    _mmap: _MmapType | None = None
     _size: int = 0
     size_fmt = '!I'
     num_bytes_for_size = struct.calcsize(size_fmt)
 
     def __init__(
-            self, name: str = '', size: int = 0, readonly: bool = False,
-            mode: int = stat.S_IREAD | stat.S_IWRITE,
-            prefix: str = 'calibre-'
+        self,
+        name: str = '',
+        size: int = 0,
+        readonly: bool = False,
+        mode: int = stat.S_IREAD | stat.S_IWRITE,
+        prefix: str = 'calibre-',
     ):
         if size < 0:
             raise TypeError("'size' must be a non-negative integer")
@@ -79,13 +82,13 @@ class SharedMemory:
                     _winapi.PAGE_READONLY if readonly else _winapi.PAGE_READWRITE,
                     (size >> 32) & 0xFFFFFFFF,
                     size & 0xFFFFFFFF,
-                    q
+                    q,
                 )
                 try:
                     last_error_code = _winapi.GetLastError()
                     if last_error_code == _winapi.ERROR_ALREADY_EXISTS:
                         continue
-                    self._mmap = mmap.mmap(-1, size, tagname=q, access=access)
+                    self._mmap = mmap.mmap(-1, size, tagname=q, access=access)  # type: ignore
                     name = q
                 finally:
                     _winapi.CloseHandle(h_map)
@@ -100,23 +103,13 @@ class SharedMemory:
         self._name = name
 
         if not create and iswindows:
-            h_map = _winapi.OpenFileMapping(
-                _winapi.FILE_MAP_READ,
-                False,
-                name
-            )
+            h_map = _winapi.OpenFileMapping(_winapi.FILE_MAP_READ, False, name)
             try:
-                p_buf = _winapi.MapViewOfFile(
-                    h_map,
-                    _winapi.FILE_MAP_READ,
-                    0,
-                    0,
-                    0
-                )
+                p_buf = _winapi.MapViewOfFile(h_map, _winapi.FILE_MAP_READ, 0, 0, 0)
             finally:
                 _winapi.CloseHandle(h_map)
             size = _winapi.VirtualQuerySize(p_buf)
-            self._mmap = mmap.mmap(-1, size, tagname=name)
+            self._mmap = mmap.mmap(-1, size, tagname=name)  # type: ignore
         if not iswindows:
             if not create:
                 self._fd = _posixshmem.shm_open(name, flags, mode)
@@ -135,11 +128,12 @@ class SharedMemory:
     @property
     def memory_address(self) -> int:
         import ctypes
+
         obj = ctypes.py_object(self.mmap)
         address = ctypes.c_void_p()
         length = ctypes.c_ssize_t()
         ctypes.pythonapi.PyObject_AsReadBuffer(obj, ctypes.byref(address), ctypes.byref(length))
-        return address.value
+        return address.value or 0
 
     def read(self, sz: int = 0) -> bytes:
         if sz <= 0:
@@ -153,12 +147,12 @@ class SharedMemory:
         return self.mmap.tell()
 
     def seek(self, pos: int, whence: int = os.SEEK_SET) -> None:
-        self.mmap.seek(pos, whence)
+        self.mmap.seek(pos, whence)  # type: ignore
 
     def flush(self) -> None:
         self.mmap.flush()
 
-    def write_data_with_size(self, data: Union[str, bytes]) -> None:
+    def write_data_with_size(self, data: str | bytes) -> None:
         if isinstance(data, str):
             data = data.encode('utf-8')
         sz = struct.pack(self.size_fmt, len(data))
@@ -175,7 +169,7 @@ class SharedMemory:
         except OSError:
             pass
 
-    def __enter__(self) -> 'SharedMemory':
+    def __enter__(self) -> SharedMemory:
         return self
 
     def __exit__(self, *a: object) -> None:
@@ -190,7 +184,7 @@ class SharedMemory:
         return self._name
 
     @property
-    def mmap(self) -> mmap.mmap:
+    def mmap(self) -> _MmapType:
         ans = self._mmap
         if ans is None:
             raise RuntimeError('Cannot access the mmap of a closed shared memory object')

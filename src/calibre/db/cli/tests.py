@@ -1,24 +1,20 @@
 #!/usr/bin/env python
+# License: GPLv3
 
-
-__license__ = 'GPL v3'
-__docformat__ = 'restructuredtext en'
-
-'''
+"""
 Test the CLI of the calibre database management tool
-'''
+"""
+
 import csv
 import unittest
 
 from calibre.db.cli.cmd_check_library import _print_check_library_results
-from polyglot.builtins import iteritems
 from polyglot.io import PolyglotBytesIO
 
 
 class Checker:
-
     def __init__(self, kw):
-        for k, v in iteritems(kw):
+        for k, v in kw.items():
             setattr(self, k, v)
 
 
@@ -50,7 +46,7 @@ class PrintCheckLibraryResultsTest(unittest.TestCase):
         _print_check_library_results(checker, self.check, out=stdout, as_csv=False)
 
         result = stdout.getvalue().decode('utf-8', 'replace').split('\n')
-        self.assertEqual(len(result), len(data)+2)
+        self.assertEqual(len(result), len(data) + 2)
         self.assertEqual(result[0], self.check[1])
 
         result_first = result[1].split('-')[0].strip()

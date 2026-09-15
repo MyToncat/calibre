@@ -1,16 +1,11 @@
 #!/usr/bin/env python
-
-
-__license__   = 'GPL v3'
-__copyright__ = '2009, Kovid Goyal <kovid@kovidgoyal.net>'
-__docformat__ = 'restructuredtext en'
+# License: GPLv3 Copyright: 2009, Kovid Goyal <kovid@kovidgoyal.net>
 
 from calibre import fit_image
 
 
 class RescaleImages:
-
-    'Rescale all images to fit inside given screen size'
+    "Rescale all images to fit inside given screen size"
 
     def __init__(self, check_colorspaces=False):
         self.check_colorspaces = check_colorspaces
@@ -30,8 +25,8 @@ class RescaleImages:
             page_width, page_height = self.opts.dest.comic_screen_size
         else:
             page_width, page_height = self.opts.dest.width, self.opts.dest.height
-            page_width -= (self.opts.margin_left + self.opts.margin_right) * self.opts.dest.dpi/72
-            page_height -= (self.opts.margin_top + self.opts.margin_bottom) * self.opts.dest.dpi/72
+            page_width -= (self.opts.margin_left + self.opts.margin_right) * self.opts.dest.dpi / 72
+            page_height -= (self.opts.margin_top + self.opts.margin_bottom) * self.opts.dest.dpi / 72
 
         no_scale_size = 99999999999
         if max_size == 'none':
@@ -70,29 +65,26 @@ class RescaleImages:
 
                 try:
                     if self.check_colorspaces and img.mode == 'CMYK':
-                        self.log.warn(
-                            'The image %s is in the CMYK colorspace, converting it '
-                            'to RGB as Adobe Digital Editions cannot display CMYK' % item.href)
+                        self.log.warn(f'The image {item.href} is in the CMYK colorspace, converting it to RGB as Adobe Digital Editions cannot display CMYK')
                         img = img.convert('RGB')
                 except Exception:
-                    self.log.exception('Failed to convert image %s from CMYK to RGB' % item.href)
+                    self.log.exception(f'Failed to convert image {item.href} from CMYK to RGB')
 
                 scaled, new_width, new_height = fit_image(width, height, page_width, page_height)
                 if scaled:
                     new_width = max(1, new_width)
                     new_height = max(1, new_height)
-                    self.log('Rescaling image from %dx%d to %dx%d'%(
-                        width, height, new_width, new_height), item.href)
+                    self.log(f'Rescaling image from {width}x{height} to {new_width}x{new_height}', item.href)
                     try:
                         img = img.resize((new_width, new_height))
                     except Exception:
-                        self.log.exception('Failed to rescale image: %s' % item.href)
+                        self.log.exception(f'Failed to rescale image: {item.href}')
                         continue
                     buf = BytesIO()
                     try:
                         img.save(buf, ext)
                     except Exception:
-                        self.log.exception('Failed to rescale image: %s' % item.href)
+                        self.log.exception(f'Failed to rescale image: {item.href}')
                     else:
                         item.data = buf.getvalue()
                         item.unload_data_from_memory()

@@ -8,7 +8,6 @@ import time
 from collections import defaultdict
 from contextlib import suppress
 from itertools import count, repeat
-from typing import Optional
 
 import apsw
 import xxhash
@@ -17,15 +16,16 @@ from calibre import sanitize_file_name
 from calibre.constants import iswindows
 from calibre.db import FTSQueryError
 from calibre.db.annotations import unicode_normalize
+from calibre.db.constants import NOTES_DB_NAME, NOTES_DIR_NAME
+from calibre.db.notes.schema_upgrade import SchemaUpgrade
 from calibre.utils.copy_files import WINDOWS_SLEEP_FOR_RETRY_TIME
 from calibre.utils.filenames import copyfile_using_links, make_long_path_useable
 from calibre.utils.icu import lower as icu_lower
-
-from .schema_upgrade import SchemaUpgrade
-from ..constants import NOTES_DB_NAME, NOTES_DIR_NAME
+from calibre.utils.localization import _
 
 if iswindows:
     from calibre_extensions import winutil
+
 
 class cmt(str):
     pass
@@ -47,19 +47,18 @@ def hash_key(key: str) -> str:
 
 def remove_with_retry(x, is_dir=False):
     x = make_long_path_useable(x)
-    f = (shutil.rmtree if is_dir else os.remove)
+    f = shutil.rmtree if is_dir else os.remove
     try:
         f(x)
     except FileNotFoundError:
         return
     except OSError as e:
-        if iswindows and e.winerror == winutil.ERROR_SHARING_VIOLATION:
+        if iswindows and getattr(e, 'winerror', None) == winutil.ERROR_SHARING_VIOLATION:
             time.sleep(WINDOWS_SLEEP_FOR_RETRY_TIME)
             f(x)
 
 
 class Notes:
-
     max_retired_items = 256
 
     def __init__(self, backend):
@@ -74,9 +73,21 @@ class Notes:
             os.makedirs(self.notes_dir, exist_ok=True)
             if iswindows:
                 winutil.set_file_attributes(self.notes_dir, winutil.FILE_ATTRIBUTE_HIDDEN | winutil.FILE_ATTRIBUTE_NOT_CONTENT_INDEXED)
-        os.makedirs(self.resources_dir, exist_ok=True)
-        os.makedirs(self.backup_dir, exist_ok=True)
-        os.makedirs(self.retired_dir, exist_ok=True)
+        try:
+            os.makedirs(self.resources_dir, exist_ok=True)
+        except FileExistsError:
+            os.remove(self.resources_dir)
+            os.makedirs(self.resources_dir, exist_ok=True)
+        try:
+            os.makedirs(self.backup_dir, exist_ok=True)
+        except FileExistsError:
+            os.remove(self.backup_dir)
+            os.makedirs(self.backup_dir, exist_ok=True)
+        try:
+            os.makedirs(self.retired_dir, exist_ok=True)
+        except FileExistsError:
+            os.remove(self.retired_dir)
+            os.makedirs(self.retired_dir, exist_ok=True)
         self.reopen(backend)
         for cat in backend.deleted_fields:
             self.delete_field(conn, cat)
@@ -84,7 +95,7 @@ class Notes:
     def reopen(self, backend):
         conn = backend.get_connection()
         conn.notes_dbpath = os.path.join(self.notes_dir, NOTES_DB_NAME)
-        conn.execute("ATTACH DATABASE ? AS notes_db", (conn.notes_dbpath,))
+        conn.execute('ATTACH DATABASE ? AS notes_db', (conn.notes_dbpath,))
         self.allowed_fields = set()
         triggers = []
         for table in backend.tables.values():
@@ -100,11 +111,19 @@ class Notes:
         self.allowed_fields = frozenset(self.allowed_fields)
         SchemaUpgrade(conn, '\n'.join(triggers))
 
+    def rename_field(self, conn, old_field_name, new_field_name):
+        conn.execute('UPDATE notes_db.notes SET colname=? WHERE colname=?', (new_field_name, old_field_name))
+        old_backup = make_long_path_useable(os.path.join(self.backup_dir, old_field_name))
+        new_backup = make_long_path_useable(os.path.join(self.backup_dir, new_field_name))
+        if os.path.exists(old_backup) and not os.path.exists(new_backup):
+            os.rename(old_backup, new_backup)
+
     def delete_field(self, conn, field_name):
         note_ids = conn.get('SELECT id from notes_db.notes WHERE colname=?', (field_name,))
         if note_ids:
             conn.execute(
-                'DELETE FROM notes_db.notes_resources_link WHERE note IN (SELECT id FROM notes_db.notes WHERE colname=?)', (field_name,)
+                'DELETE FROM notes_db.notes_resources_link WHERE note IN (SELECT id FROM notes_db.notes WHERE colname=?)',
+                (field_name,),
             )
             conn.execute('DELETE FROM notes_db.notes WHERE colname=?', (field_name,))
             self.remove_unreferenced_resources(conn)
@@ -120,16 +139,19 @@ class Notes:
     def path_for_resource(self, resource_hash: str) -> str:
         hashalg, digest = resource_hash.split(':', 1)
         prefix = digest[:2]
-        # Cant use colons in filenames on windows safely
+        # Can't use colons in filenames on windows safely
         return os.path.join(self.resources_dir, prefix, f'{hashalg}-{digest}')
 
     def remove_resources(self, conn, note_id, resources_to_potentially_remove, delete_from_link_table=True):
         if not isinstance(resources_to_potentially_remove, tuple):
             resources_to_potentially_remove = tuple(resources_to_potentially_remove)
         if delete_from_link_table:
-            conn.executemany('''
+            conn.executemany(
+                '''
                 DELETE FROM notes_db.notes_resources_link WHERE note=? AND resource=?
-            ''', tuple((note_id, x) for x in resources_to_potentially_remove))
+            ''',
+                tuple((note_id, x) for x in resources_to_potentially_remove),
+            )
         stmt = '''
             WITH resources_table(value) AS (VALUES {})
             SELECT value FROM resources_table WHERE value NOT IN (SELECT resource FROM notes_db.notes_resources_link)
@@ -179,7 +201,7 @@ class Notes:
             for rhash, rname in resources:
                 rpath = make_long_path_useable(self.path_for_resource(rhash))
                 if os.path.exists(rpath):
-                    rdest = os.path.join(destdir, 'res-'+rname)
+                    rdest = os.path.join(destdir, 'res-' + rname)
                     with suppress(shutil.SameFileError):
                         copyfile_using_links(rpath, make_long_path_useable(rdest), dest_is_dir=False)
             self.trim_retired_dir()
@@ -191,7 +213,7 @@ class Notes:
             return note_id
         with open(os.path.join(srcdir, DOC_NAME), 'rb') as src:
             try:
-                a, b, _ = src.read().split(SEP, 2)
+                a, b, _x = src.read().split(SEP, 2)
             except Exception:
                 return note_id
             marked_up_text, searchable_text = a.decode('utf-8'), b.decode('utf-8')
@@ -201,7 +223,16 @@ class Notes:
                 rname = x.split('-', 1)[1]
                 with open(os.path.join(srcdir, x), 'rb') as rsrc:
                     resources.add(self.add_resource(conn, rsrc, rname, update_name=False))
-        note_id = self.set_note(conn, field_name, item_id, item_value, marked_up_text, resources, searchable_text, add_item_value_to_searchable_text=False)
+        note_id = self.set_note(
+            conn,
+            field_name,
+            item_id,
+            item_value,
+            marked_up_text,
+            resources,
+            searchable_text,
+            add_item_value_to_searchable_text=False,
+        )
         if note_id > -1:
             remove_with_retry(srcdir, is_dir=True)
         return note_id
@@ -211,8 +242,17 @@ class Notes:
         remove_with_retry(srcdir, is_dir=True)
 
     def set_note(
-            self, conn, field_name, item_id, item_value, marked_up_text='', used_resource_hashes=(),
-            searchable_text=copy_marked_up_text, ctime=None, mtime=None, add_item_value_to_searchable_text=True
+        self,
+        conn,
+        field_name,
+        item_id,
+        item_value,
+        marked_up_text='',
+        used_resource_hashes=(),
+        searchable_text=copy_marked_up_text,
+        ctime=None,
+        mtime=None,
+        add_item_value_to_searchable_text=True,
     ):
         if searchable_text is copy_marked_up_text:
             searchable_text = marked_up_text
@@ -227,7 +267,8 @@ class Notes:
                 if old_resources:
                     resources = conn.get(
                         'SELECT hash,name FROM notes_db.resources WHERE hash IN ({})'.format(','.join(repeat('?', len(old_resources)))),
-                        tuple(old_resources))
+                        tuple(old_resources),
+                    )
                 self.retire_entry(field_name, item_id, item_value, resources, note_id)
                 if old_resources:
                     self.remove_resources(conn, note_id, old_resources, delete_from_link_table=False)
@@ -243,21 +284,35 @@ class Notes:
                     ctime = now
                 if mtime is None:
                     mtime = now
-                note_id = conn.get('''
+                note_id = conn.get(
+                    '''
                     INSERT INTO notes_db.notes (item,colname,doc,searchable_text,ctime,mtime) VALUES (?,?,?,?,?,?) RETURNING notes.id;
-                ''', (item_id, field_name, marked_up_text, searchable_text, ctime, mtime), all=False)
+                ''',
+                    (item_id, field_name, marked_up_text, searchable_text, ctime, mtime),
+                    all=False,
+                )
             else:
-                note_id = conn.get('''
+                note_id = conn.get(
+                    '''
                     INSERT INTO notes_db.notes (item,colname,doc,searchable_text) VALUES (?,?,?,?) RETURNING notes.id;
-                ''', (item_id, field_name, marked_up_text, searchable_text), all=False)
+                ''',
+                    (item_id, field_name, marked_up_text, searchable_text),
+                    all=False,
+                )
         else:
-            conn.execute('UPDATE notes_db.notes SET doc=?,searchable_text=? WHERE id=?', (marked_up_text, searchable_text, note_id))
+            conn.execute(
+                'UPDATE notes_db.notes SET doc=?,searchable_text=? WHERE id=?',
+                (marked_up_text, searchable_text, note_id),
+            )
         if resources_to_potentially_remove:
             self.remove_resources(conn, note_id, resources_to_potentially_remove)
         if resources_to_add:
-            conn.executemany('''
+            conn.executemany(
+                '''
                 INSERT INTO notes_db.notes_resources_link (note,resource) VALUES (?,?);
-            ''', tuple((note_id, x) for x in resources_to_add))
+            ''',
+                tuple((note_id, x) for x in resources_to_add),
+            )
         self.set_backup_for(field_name, item_id, item_value, marked_up_text, searchable_text, used_resource_hashes)
         return note_id
 
@@ -266,12 +321,16 @@ class Notes:
 
     def get_note_data(self, conn, field_name, item_id):
         ans = None
-        for (note_id, doc, searchable_text, ctime, mtime) in conn.execute(
-            'SELECT id,doc,searchable_text,ctime,mtime FROM notes_db.notes WHERE item=? AND colname=?', (item_id, field_name)
+        for note_id, doc, searchable_text, ctime, mtime in conn.execute(
+            'SELECT id,doc,searchable_text,ctime,mtime FROM notes_db.notes WHERE item=? AND colname=?',
+            (item_id, field_name),
         ):
             ans = {
-                'id': note_id, 'doc': doc, 'searchable_text': searchable_text,
-                'ctime': ctime, 'mtime': mtime,
+                'id': note_id,
+                'doc': doc,
+                'searchable_text': searchable_text,
+                'ctime': ctime,
+                'mtime': mtime,
                 'resource_hashes': frozenset(self.resources_used_by(conn, note_id)),
             }
             break
@@ -281,7 +340,7 @@ class Notes:
         if field_name:
             return {item_id for (item_id,) in conn.execute('SELECT item FROM notes_db.notes WHERE colname=?', (field_name,))}
         ans = defaultdict(set)
-        for (note_id, field_name) in conn.execute('SELECT item, colname FROM notes_db.notes'):
+        for note_id, field_name in conn.execute('SELECT item, colname FROM notes_db.notes'):
             ans[field_name].add(note_id)
         return ans
 
@@ -295,7 +354,15 @@ class Notes:
         old_note = self.get_note_data(conn, field_name, old_item_id)
         if not old_note or not old_note['doc']:
             return
-        self.set_note(conn, field_name, new_item_id, new_item_value, old_note['doc'], old_note['resource_hashes'], old_note['searchable_text'])
+        self.set_note(
+            conn,
+            field_name,
+            new_item_id,
+            new_item_value,
+            old_note['doc'],
+            old_note['resource_hashes'],
+            old_note['searchable_text'],
+        )
 
     def trim_retired_dir(self):
         items = []
@@ -303,11 +370,13 @@ class Notes:
             items.append(d.path)
         extra = len(items) - self.max_retired_items
         if extra > 0:
+
             def key(path):
                 path = os.path.join(path, 'note_id')
                 with suppress(OSError):
                     with open(path) as f:
                         return os.stat(path, follow_symlinks=False).st_mtime_ns, int(f.read())
+
             items.sort(key=key)
             for path in items[:extra]:
                 remove_with_retry(path, is_dir=True)
@@ -350,7 +419,7 @@ class Notes:
                     try:
                         conn.execute('UPDATE notes_db.resources SET name=? WHERE hash=?', (name, resource_hash))
                         with open(path + METADATA_EXT, 'w') as fn:
-                            fn.write(json.dumps({'name':name}))
+                            fn.write(json.dumps({'name': name}))
                         break
                     except apsw.ConstraintError:
                         c += 1
@@ -361,14 +430,14 @@ class Notes:
                 try:
                     conn.get('INSERT INTO notes_db.resources (hash,name) VALUES (?,?)', (resource_hash, name), all=False)
                     with open(path + METADATA_EXT, 'w') as fn:
-                        fn.write(json.dumps({'name':name}))
+                        fn.write(json.dumps({'name': name}))
                     break
                 except apsw.ConstraintError:
                     c += 1
                     name = f'{base_name}-{c}{ext}'
         return resource_hash
 
-    def get_resource_data(self, conn, resource_hash) -> Optional[dict]:
+    def get_resource_data(self, conn, resource_hash) -> dict | None:
         ans = None
         for (name,) in conn.execute('SELECT name FROM notes_db.resources WHERE hash=?', (resource_hash,)):
             path = self.path_for_resource(resource_hash)
@@ -380,7 +449,7 @@ class Notes:
                 break
         return ans
 
-    def all_notes(self, conn, restrict_to_fields=(), limit=None, snippet_size=64, return_text=True, process_each_result=None) -> list[dict]:
+    def all_notes(self, conn, restrict_to_fields=(), limit=None, snippet_size=64, return_text=True, process_each_result=None):
         if snippet_size is None:
             snippet_size = 64
         char_size = snippet_size * 8
@@ -403,13 +472,28 @@ class Notes:
             if ret is True:
                 break
 
-    def search(self,
-        conn, fts_engine_query, use_stemming, highlight_start, highlight_end, snippet_size, restrict_to_fields=(),
-        return_text=True, process_each_result=None, limit=None
+    def search(
+        self,
+        conn,
+        fts_engine_query,
+        use_stemming,
+        highlight_start,
+        highlight_end,
+        snippet_size,
+        restrict_to_fields=(),
+        return_text=True,
+        process_each_result=None,
+        limit=None,
     ):
         if not fts_engine_query:
             yield from self.all_notes(
-                conn, restrict_to_fields, limit=limit, snippet_size=snippet_size, return_text=return_text, process_each_result=process_each_result)
+                conn,
+                restrict_to_fields,
+                limit=limit,
+                snippet_size=snippet_size,
+                return_text=return_text,
+                process_each_result=process_each_result,
+            )
             return
         fts_engine_query = unicode_normalize(fts_engine_query)
         fts_table = 'notes_fts' + ('_stemmed' if use_stemming else '')
@@ -452,14 +536,16 @@ class Notes:
 
     def export_non_db_data(self, zf):
         import zipfile
+
         def add_dir(which):
-            for dirpath, _, filenames in os.walk(make_long_path_useable(which)):
+            for dirpath, _x, filenames in os.walk(make_long_path_useable(which)):
                 for f in filenames:
                     path = os.path.join(dirpath, f)
                     with open(path, 'rb') as src:
                         zi = zipfile.ZipInfo.from_file(path, arcname=os.path.relpath(path, self.notes_dir))
                         with zf.open(zi, 'w') as dest:
                             shutil.copyfileobj(src, dest)
+
         add_dir(self.backup_dir)
         add_dir(self.resources_dir)
 
@@ -518,9 +604,11 @@ class Notes:
                     continue
                 item_id = rmap.get(old_item_val)
                 if item_id is None:
-                    errors.append(_(
-                        'The item {old_item_val} does not exist in the {field} column in the restored database, could not restore its notes'
-                    ).format(old_item_val=old_item_val, field=field))
+                    errors.append(
+                        _('The item {old_item_val} does not exist in the {field} column in the restored database, could not restore its notes').format(
+                            old_item_val=old_item_val, field=field
+                        )
+                    )
                     report_progress('', i)
                     continue
                 report_progress(old_item_val, i)
@@ -530,7 +618,17 @@ class Notes:
                     errors.append(_('Some resources for {} were missing').format(old_item_val))
                 resources &= known_resources
                 try:
-                    self.set_note(conn, field, item_id, old_item_val, doc, resources, searchable_text, ctime=st.st_ctime, mtime=st.st_mtime)
+                    self.set_note(
+                        conn,
+                        field,
+                        item_id,
+                        old_item_val,
+                        doc,
+                        resources,
+                        searchable_text,
+                        ctime=getattr(st, 'st_birthtime', st.st_ctime),  # type: ignore
+                        mtime=st.st_mtime,
+                    )
                 except Exception as e:
                     errors.append(_('Failed to set note for {path} with error: {error}').format(path=old_item_val, error=e))
         return errors
@@ -543,14 +641,24 @@ class Notes:
 
         def get_resource(rhash):
             return self.get_resource_data(conn, rhash)
+
         return export_note(nd['doc'], get_resource)
 
     def import_note(self, conn, field_name, item_id, item_value, html, basedir, ctime=None, mtime=None):
         from .exim import import_note
+
         def add_resource(path_or_stream_or_data, name):
             return self.add_resource(conn, path_or_stream_or_data, name)
+
         doc, searchable_text, resources = import_note(html, basedir, add_resource)
         return self.set_note(
-            conn, field_name, item_id, item_value, marked_up_text=doc, used_resource_hashes=resources, searchable_text=searchable_text,
-            ctime=ctime, mtime=mtime
+            conn,
+            field_name,
+            item_id,
+            item_value,
+            marked_up_text=doc,
+            used_resource_hashes=resources,
+            searchable_text=searchable_text,
+            ctime=ctime,
+            mtime=mtime,
         )

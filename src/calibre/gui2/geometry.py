@@ -1,15 +1,19 @@
 #!/usr/bin/env python
 # License: GPL v3 Copyright: 2022, Kovid Goyal <kovid at kovidgoyal.net>
 
-
 # See https://bugreports.qt.io/browse/QTBUG-69104 for why we need to implement
 # our own restore geometry
 
+from collections.abc import Callable
 
-from qt.core import QApplication, QRect, QScreen, QSize, Qt, QWidget
+from qt.core import QRect, QScreen, QSize, Qt, QWidget
 
 from calibre.constants import is_debugging as _is_debugging
-from calibre.utils.config_base import tweaks
+from calibre.utils.config_base import Prefs, tweaks
+
+
+def geometry_pref_name(name):
+    return f'geometry-of-{name}'
 
 
 def is_debugging():
@@ -19,6 +23,7 @@ def is_debugging():
 def debug(*a, **kw):
     if is_debugging():
         from pprint import pformat
+
         items = []
         for x in a:
             if not isinstance(x, str):
@@ -44,8 +49,10 @@ def dict_as_rect(g: dict) -> QRect:
 
 
 def screen_as_dict(self: QScreen):
+    from calibre.gui2 import qapplication_or_fail
+
     try:
-        num = QApplication.instance().screens().index(self)
+        num = qapplication_or_fail().screens().index(self)
     except Exception:
         num = -1
     return {
@@ -77,23 +84,28 @@ def geometry_for_restore_as_dict(self: QWidget):
     return ans
 
 
-def save_geometry(self: QWidget, prefs: dict, name: str):
+def delete_geometry(prefs: dict, name: str):
+    prefs.pop(geometry_pref_name(name), None)
+
+
+def save_geometry(self: QWidget, prefs: Prefs, name: str):
     x = geometry_for_restore_as_dict(self)
     if x:
         if is_debugging():
             debug('Saving geometry for:', name)
             debug(x)
         x['qt'] = bytearray(self.saveGeometry())
-        prefs.set(f'geometry-of-{name}', x)
+        prefs.set(geometry_pref_name(name), x)
 
 
 def find_matching_screen(screen_as_dict):
-    screens = QApplication.instance().screens()
+    from calibre.gui2 import qapplication_or_fail
+
+    screens = qapplication_or_fail().screens()
     size = dict_as_size(screen_as_dict['size_in_logical_pixels'])
     vg = dict_as_rect(screen_as_dict['virtual_geometry'])
     dpr = screen_as_dict['device_pixel_ratio']
-    screens_of_matching_size = tuple(
-        s for s in screens if s.size() == size and vg == s.virtualGeometry() and s.devicePixelRatio() == dpr)
+    screens_of_matching_size = tuple(s for s in screens if s.size() == size and vg == s.virtualGeometry() and s.devicePixelRatio() == dpr)
     if screen_as_dict['serial']:
         for q in screens_of_matching_size:
             if q.serialNumber() == screen_as_dict['serial']:
@@ -129,8 +141,24 @@ def _do_restore(self: QWidget, s: QScreen, geometry: QRect, saved_data: dict):
     return True
 
 
+def saved_geometry_is_sane(saved_geometry: QRect, virtual_geometry: QRect) -> bool:
+    # Guard against corrupted saved geometry that would make the window
+    # unusable, such as one larger than the entire virtual desktop or fully
+    # off-screen. Partially off-screen is fine, users park windows that way.
+    if not saved_geometry.isValid():
+        return False
+    if saved_geometry.width() > virtual_geometry.width() or saved_geometry.height() > virtual_geometry.height():
+        return False
+    if not saved_geometry.intersects(virtual_geometry):
+        return False
+    return True
+
+
 def _restore_to_matching_screen(self: QWidget, s: QScreen, saved_data: dict) -> bool:
     saved_geometry = dict_as_rect(saved_data['geometry'])
+    if not saved_geometry_is_sane(saved_geometry, s.virtualGeometry()):
+        debug('Saved geometry is not sane for matched screen, restoring as if to a new screen')
+        return _restore_to_new_screen(self, s, saved_data)
     return _do_restore(self, s, saved_geometry, saved_data)
 
 
@@ -152,8 +180,10 @@ def _restore_to_new_screen(self: QWidget, s: QScreen, saved_data: dict) -> bool:
     return _do_restore(self, s, geometry, saved_data)
 
 
-def _restore_geometry(self: QWidget, prefs: dict, name: str, get_legacy_saved_geometry: callable = None) -> bool:
-    x = prefs.get(f'geometry-of-{name}')
+def _restore_geometry(self: QWidget, prefs: Prefs, name: str, get_legacy_saved_geometry: Callable[[], bytes] | None = None) -> bool:
+    from calibre.gui2 import qapplication_or_fail
+
+    x = prefs.get(geometry_pref_name(name))
     if not x:
         old = get_legacy_saved_geometry() if get_legacy_saved_geometry else prefs.get(name)
         if old is not None:
@@ -161,21 +191,24 @@ def _restore_geometry(self: QWidget, prefs: dict, name: str, get_legacy_saved_ge
         return False
     if is_debugging():
         debug('Restoring geometry for:', name)
-        dx =  x.copy()
+        dx = x.copy()
         del dx['qt']
         debug(dx)
     s = find_matching_screen(x['screen'])
     debug('Matching screen:', screen_as_dict(s) if s else None)
     if s is None:
         if is_debugging():
-            debug('No screens matched saved screen. Available screens:', tuple(map(screen_as_dict, QApplication.instance().screens())))
+            debug(
+                'No screens matched saved screen. Available screens:',
+                tuple(map(screen_as_dict, qapplication_or_fail().screens())),
+            )
         p = self.nativeParentWidget()
         if p is not None:
             s = p.screen()
         if s is None:
             s = self.screen()
             if s is None:
-                s = QApplication.instance().primaryScreen()
+                s = qapplication_or_fail().primaryScreen()
     else:
         return _restore_to_matching_screen(self, s, x)
     if s is None:
@@ -186,15 +219,23 @@ def _restore_geometry(self: QWidget, prefs: dict, name: str, get_legacy_saved_ge
 screen_debug_has_been_output = False
 
 
-def restore_geometry(self: QWidget, prefs: dict, name: str, get_legacy_saved_geometry: callable = None) -> bool:
+def restore_geometry(self: QWidget, prefs: Prefs, name: str, get_legacy_saved_geometry: Callable[[], bytes] | None = None) -> bool:
+    from calibre.gui2 import qapplication_or_fail
+
     global screen_debug_has_been_output
     if not screen_debug_has_been_output:
         screen_debug_has_been_output = True
         debug('Screens currently in system:')
-        for screen in QApplication.instance().screens():
+        for screen in qapplication_or_fail().screens():
             debug(screen_as_dict(screen))
-    if _restore_geometry(self, prefs, name, get_legacy_saved_geometry):
-        return True
+    try:
+        if _restore_geometry(self, prefs, name, get_legacy_saved_geometry):
+            return True
+    except Exception:
+        # Corrupted saved geometry data, fall back to the default size
+        import traceback
+
+        traceback.print_exc()
     sz = self.sizeHint()
     if sz.isValid():
         self.resize(self.sizeHint())
@@ -203,3 +244,27 @@ def restore_geometry(self: QWidget, prefs: dict, name: str, get_legacy_saved_geo
 
 QWidget.save_geometry = save_geometry
 QWidget.restore_geometry = restore_geometry
+
+
+def find_tests():
+    import unittest
+
+    class TestSavedGeometrySanity(unittest.TestCase):
+        def test_saved_geometry_sanity(self):
+            virtual_geometry = QRect(0, 0, 1920, 1080)
+
+            def sane(x, y, width, height):
+                return saved_geometry_is_sane(QRect(x, y, width, height), virtual_geometry)
+
+            self.assertTrue(sane(10, 10, 800, 600))
+            self.assertTrue(sane(0, 0, 1920, 1080), 'geometry filling the virtual desktop must be sane')
+            self.assertTrue(sane(-400, -300, 800, 600), 'partially off-screen geometry must be sane')
+            self.assertTrue(sane(1900, 1060, 800, 600), 'partially off-screen geometry must be sane')
+            self.assertFalse(sane(0, 0, 0, 0), 'empty geometry must not be sane')
+            self.assertFalse(sane(0, 0, -800, 600), 'negative size geometry must not be sane')
+            self.assertFalse(sane(0, 0, 100000, 600), 'geometry wider than the virtual desktop must not be sane')
+            self.assertFalse(sane(0, 0, 800, 100000), 'geometry taller than the virtual desktop must not be sane')
+            self.assertFalse(sane(5000, 5000, 800, 600), 'fully off-screen geometry must not be sane')
+            self.assertFalse(sane(-5000, 100, 800, 600), 'fully off-screen geometry must not be sane')
+
+    return unittest.defaultTestLoader.loadTestsFromTestCase(TestSavedGeometrySanity)

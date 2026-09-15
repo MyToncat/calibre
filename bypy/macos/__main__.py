@@ -19,6 +19,8 @@ import zipfile
 from functools import partial, reduce
 from itertools import repeat
 
+import icnsutil
+
 from bypy.constants import OUTPUT_DIR, PREFIX, PYTHON, python_major_minor_version
 from bypy.constants import SRC as CALIBRE_DIR
 from bypy.freeze import extract_extension_modules, fix_pycryptodome, freeze_python, is_package_dir, path_to_freeze_dir
@@ -38,7 +40,7 @@ QT_FRAMEWORKS = [x.replace(f'{QT_MAJOR}', '') for x in QT_DLLS]
 ENV = dict(
     FONTCONFIG_PATH='@executable_path/../Resources/fonts',
     FONTCONFIG_FILE='@executable_path/../Resources/fonts/fonts.conf',
-    SSL_CERT_FILE='@executable_path/../Resources/resources/mozilla-ca-certs.pem',
+    SSL_CERT_DIR='@executable_path/../Resources/resources/mozilla-ca-certs',
     OPENSSL_ENGINES='@executable_path/../Frameworks/engines-3',
     OPENSSL_MODULES='@executable_path/../Frameworks/ossl-modules',
 )
@@ -46,7 +48,21 @@ APPNAME, VERSION = calibre_constants['appname'], calibre_constants['version']
 basenames, main_modules, main_functions = calibre_constants['basenames'], calibre_constants['modules'], calibre_constants['functions']
 ARCH_FLAGS = '-arch x86_64 -arch arm64'.split()
 EXPECTED_ARCHES = {'x86_64', 'arm64'}
-MINIMUM_SYSTEM_VERSION = '13.0.0'
+MINIMUM_SYSTEM_VERSION = '14.0.0'
+
+
+def generate_icns(light_iconset: str, dark_iconset: str, output_path: str) -> None:
+    def add_iconset(icns, path):
+        for img in sorted(os.listdir(path)):
+            if img.endswith('.png'):
+                icns.add_media(file=os.path.join(path, img))
+    dark_icns = icnsutil.IcnsFile()
+    add_iconset(dark_icns, dark_iconset)
+    dark_icns.write(output_path)
+    light_icns = icnsutil.IcnsFile()
+    add_iconset(light_icns, light_iconset)
+    light_icns.add_media(icnsutil.IcnsType.key_from_readable('dark'), file=output_path)
+    light_icns.write(output_path)
 
 
 def compile_launcher_lib(contents_dir, base, pyver, inc_dir):
@@ -223,6 +239,7 @@ class Freeze:
 
     @flush
     def run_tests(self):
+        print('Running tests...', flush=True)
         self.test_runner(join(self.contents_dir, 'MacOS', 'calibre-debug'), self.contents_dir)
 
     @flush
@@ -370,16 +387,14 @@ class Freeze:
 
     @flush
     def create_skeleton(self):
+        print('Creating skeleton')
         c = join(self.build_dir, 'Contents')
         for x in ('Frameworks', 'MacOS', 'Resources'):
             os.makedirs(join(c, x))
-        icons = glob.glob(join(CALIBRE_DIR, 'icons', 'icns', '*.iconset'))
-        if not icons:
-            raise SystemExit('Failed to find icns format icons')
-        for x in icons:
-            subprocess.check_call([
-                'iconutil', '-c', 'icns', x, '-o', join(
-                    self.resources_dir, basename(x).partition('.')[0] + '.icns')])
+        icns_dir = join(CALIBRE_DIR, 'icons', 'icns')
+        shutil.copy(join(icns_dir, 'Assets.car'), self.resources_dir)
+        for x in glob.glob(join(icns_dir, '*.icns')):
+            shutil.copy(x, self.resources_dir)
         for helpers in (self.helpers_dir,):
             os.makedirs(helpers)
             cdir = dirname(helpers)
@@ -403,7 +418,8 @@ class Freeze:
                 LSMinimumSystemVersion=MINIMUM_SYSTEM_VERSION,
                 LSRequiresNativeExecution=True,
                 NSAppleScriptEnabled=False,
-                CFBundleIconFile='',
+                CFBundleIconFile='book.icns',
+                CFBundleIconName='book',
             )
             with open(join(cdir, 'Info.plist'), 'wb') as p:
                 plistlib.dump(pl, p)
@@ -457,6 +473,7 @@ class Freeze:
             NSHumanReadableCopyright=time.strftime('Copyright %Y, Kovid Goyal'),
             CFBundleGetInfoString=('calibre, an E-book management '
                                    'application. Visit https://calibre-ebook.com for details.'),
+            CFBundleIconName='calibre',
             CFBundleIconFile='calibre.icns',
             NSHighResolutionCapable=True,
             LSApplicationCategoryType='public.app-category.productivity',
@@ -478,13 +495,13 @@ class Freeze:
     @flush
     def add_podofo(self):
         print('\nAdding PoDoFo')
-        pdf = join(PREFIX, 'lib', 'libpodofo.2.dylib')
+        pdf = join(PREFIX, 'lib', 'libpodofo.4.dylib')
         self.install_dylib(pdf)
 
     @flush
     def add_poppler(self):
         print('\nAdding poppler')
-        for x in ('libopenjp2.7.dylib', 'libpoppler.130.dylib',):
+        for x in ('libopenjp2.7.dylib', 'libpoppler.154.dylib', 'liblcms2.2.dylib',):
             self.install_dylib(join(PREFIX, 'lib', x))
         for x in ('pdftohtml', 'pdftoppm', 'pdfinfo', 'pdftotext'):
             self.install_dylib(
@@ -527,20 +544,25 @@ class Freeze:
 
     @flush
     def add_misc_libraries(self):
-        for x in (
-            'usb-1.0.0', 'mtp.9', 'chm.0', 'sqlite3.0', 'hunspell-1.7.0',
-            'icudata.73', 'icui18n.73', 'icuio.73', 'icuuc.73', 'hyphen.0', 'uchardet.0',
-            'stemmer.0', 'xslt.1', 'exslt.0', 'xml2.2', 'z.1', 'unrar', 'lzma.5',
-            'brotlicommon.1', 'brotlidec.1', 'brotlienc.1', 'zstd.1', 'jbig.2.1', 'tiff.6',
-            'crypto.3', 'ssl.3', 'iconv.2',  # 'ltdl.7'
-        ):
+
+        def add_lib(src):
+            x = os.path.basename(src)
             print('\nAdding', x)
-            x = 'lib%s.dylib' % x
-            src = join(PREFIX, 'lib', x)
             shutil.copy2(src, self.frameworks_dir)
             dest = join(self.frameworks_dir, x)
             self.set_id(dest, self.FID + '/' + x)
             self.fix_dependencies_in_lib(dest)
+
+        for x in (
+            'usb-1.0.0', 'mtp.9', 'chm.0', 'sqlite3', 'hunspell-1.7.0',
+            'icudata.78', 'icui18n.78', 'icuio.78', 'icuuc.78', 'hyphen.0', 'uchardet.0',
+            'stemmer.0', 'xslt.1', 'exslt.0', 'xml2.16', 'z.1', 'unrar', 'lzma.5',
+            'brotlicommon.1', 'brotlidec.1', 'brotlienc.1', 'zstd.1', 'jbig.2.1', 'tiff.6',
+            'crypto.3', 'ssl.3', 'iconv.2', 'espeak-ng.1', 'onnxruntime.1.23.2',  # 'ltdl.7'
+        ):
+            x = 'lib%s.dylib' % x
+            src = join(PREFIX, 'lib', x)
+            add_lib(src)
 
         # OpenSSL modules and engines
         for x in ('ossl-modules', 'engines-3'):
@@ -551,6 +573,8 @@ class Freeze:
                     dylib = join(dest, dylib)
                     self.set_id(dylib, self.FID + '/' + x + '/' + os.path.basename(dylib))
                     self.fix_dependencies_in_lib(dylib)
+        # espeak voices used for piper phonemization
+        shutil.copytree(join(PREFIX, 'share', 'espeak-ng-data'), join(self.resources_dir, 'espeak-ng-data'))
 
     @flush
     def add_site_packages(self):
@@ -606,12 +630,15 @@ class Freeze:
 
     @flush
     def add_package_dir(self, x, dest=None):
+        is_kakasi = 'pykakasi' in x
+        allowed_exts = ('', '.py', '.so')
+        if is_kakasi:
+            allowed_exts += ('.db',)
         def ignore(root, files):
             ans = []
             for y in files:
                 ext = os.path.splitext(y)[1]
-                if ext not in ('', '.py', '.so') or \
-                        (not ext and not os.path.isdir(join(root, y))):
+                if ext not in allowed_exts or (not ext and not os.path.isdir(join(root, y))):
                     ans.append(y)
 
             return ans
@@ -750,6 +777,7 @@ class Freeze:
             }[launcher]
             plist['CFBundleExecutable'] = launcher
             plist['CFBundleIdentifier'] = 'com.calibre-ebook.' + launcher
+            plist['CFBundleIconName'] = launcher
             plist['CFBundleIconFile'] = launcher + '.icns'
             e = plist['CFBundleDocumentTypes'][0]
             e['CFBundleTypeExtensions'] = [x.lower() for x in formats]

@@ -1,7 +1,6 @@
 #!/usr/bin/env python
 # License: GPL v3 Copyright: 2022, Kovid Goyal <kovid at kovidgoyal.net>
 
-
 from urllib.parse import urlencode
 
 from lxml import etree, html
@@ -9,7 +8,12 @@ from lxml import etree, html
 from calibre.gui2.store.search_result import SearchResult
 from calibre.scraper.simple import read_url
 
-module_version = 1  # needed for live updates
+try:
+    from calibre.utils.xml_parse import safe_html_fromstring
+except ImportError:
+    safe_html_fromstring = html.fromstring
+
+module_version = 2  # needed for live updates
 
 
 def search_amazon(self, query, max_results=10, timeout=60, write_html_to=None):
@@ -21,7 +25,8 @@ def search_amazon(self, query, max_results=10, timeout=60, write_html_to=None):
         if isinstance(x, str):
             x = x.encode('utf-8')
         return x
-    uquery = {asbytes(k):asbytes(v) for k, v in uquery.items()}
+
+    uquery = {asbytes(k): asbytes(v) for k, v in uquery.items()}
     url = self.SEARCH_BASE_URL + '?' + urlencode(uquery)
 
     counter = max_results
@@ -29,7 +34,7 @@ def search_amazon(self, query, max_results=10, timeout=60, write_html_to=None):
     if write_html_to is not None:
         with open(write_html_to, 'w') as f:
             f.write(raw)
-    doc = html.fromstring(raw)
+    doc = safe_html_fromstring(raw)
     for result in doc.xpath('//div[contains(@class, "s-result-list")]//div[@data-index and @data-asin]'):
         kformat = ''.join(result.xpath(f'.//a[contains(text(), "{self.KINDLE_EDITION}")]//text()'))
         # Even though we are searching digital-text only Amazon will still
@@ -47,7 +52,7 @@ def search_amazon(self, query, max_results=10, timeout=60, write_html_to=None):
         adiv = result.xpath('.//div[contains(@class, "a-color-secondary")]')[0]
         aparts = etree.tostring(adiv, method='text', encoding='unicode').split()
         idx = aparts.index(self.BY)
-        author = ' '.join(aparts[idx+1:]).split('|')[0].strip()
+        author = ' '.join(aparts[idx + 1 :]).split('|')[0].strip()
         price = ''
         for span in result.xpath('.//span[contains(@class, "a-price")]/span[contains(@class, "a-offscreen")]'):
             q = ''.join(span.xpath('./text()'))
@@ -69,11 +74,8 @@ def search_amazon(self, query, max_results=10, timeout=60, write_html_to=None):
 
 
 def parse_details_amazon(self, idata, search_result):
-    if idata.xpath('boolean(//div[@class="content"]//li/b[contains(text(), "' +
-                    self.DRM_SEARCH_TEXT + '")])'):
-        if idata.xpath('boolean(//div[@class="content"]//li[contains(., "' +
-                        self.DRM_FREE_TEXT + '") and contains(b, "' +
-                        self.DRM_SEARCH_TEXT + '")])'):
+    if idata.xpath('boolean(//div[@class="content"]//li/b[contains(text(), "' + self.DRM_SEARCH_TEXT + '")])'):
+        if idata.xpath('boolean(//div[@class="content"]//li[contains(., "' + self.DRM_FREE_TEXT + '") and contains(b, "' + self.DRM_SEARCH_TEXT + '")])'):
             search_result.drm = SearchResult.DRM_UNLOCKED
         else:
             search_result.drm = SearchResult.DRM_UNKNOWN

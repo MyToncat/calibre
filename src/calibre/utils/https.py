@@ -1,34 +1,31 @@
 #!/usr/bin/env python
+# License: GPLv3 Copyright: 2014, Kovid Goyal <kovid at kovidgoyal.net>
 
-
-__license__ = 'GPL v3'
-__copyright__ = '2014, Kovid Goyal <kovid at kovidgoyal.net>'
-
+import http.client
 import ssl
 from contextlib import closing
+from urllib.parse import urlsplit
 
 from calibre import get_proxies
 from calibre.utils.resources import get_path as P
-from polyglot import http_client
-from polyglot.urllib import urlsplit
 
 
 class HTTPError(ValueError):
-
     def __init__(self, url, code):
-        msg = '%s returned an unsupported http response code: %d (%s)' % (
-                url, code, http_client.responses.get(code, None))
+        msg = f'{url} returned an unsupported http response code: {code} ({http.client.responses.get(code, None)})'
         ValueError.__init__(self, msg)
         self.code = code
         self.url = url
 
 
-class HTTPSConnection(http_client.HTTPSConnection):
-
+class HTTPSConnection(http.client.HTTPSConnection):
     def __init__(self, *args, **kwargs):
         cafile = kwargs.pop('cert_file', None)
-        if cafile is None:
+        capath = kwargs.pop('cadir', None)
+        if cafile is None and capath is None:
             kwargs['context'] = ssl._create_unverified_context()
+        elif capath:  # prefer capath as it performs better
+            kwargs['context'] = ssl.create_default_context(capath=capath)
         else:
             kwargs['context'] = ssl.create_default_context(cafile=cafile)
         if kwargs.pop('disable_x509_strict_checking', False):
@@ -37,19 +34,27 @@ class HTTPSConnection(http_client.HTTPSConnection):
             kwargs['context'].verify_flags &= ~ssl.VERIFY_X509_STRICT
         else:
             kwargs['context'].verify_flags |= ssl.VERIFY_X509_STRICT
-        http_client.HTTPSConnection.__init__(self, *args, **kwargs)
+        http.client.HTTPSConnection.__init__(self, *args, **kwargs)
 
 
 def get_https_resource_securely(
-    url, cacerts='calibre-ebook-root-CA.crt', timeout=60, max_redirects=5, ssl_version=None, headers=None, get_response=False):
-    '''
+    url,
+    cacerts='calibre-ebook-root-CA.crt',
+    timeout=60,
+    max_redirects=5,
+    ssl_version=None,
+    headers=None,
+    get_response=False,
+    cadir='',
+):
+    """
     Download the resource pointed to by url using https securely (verify server
     certificate).  Ensures that redirects, if any, are also downloaded
     securely. Needs a CA certificates bundle (in PEM format) to verify the
     server's certificates.
 
     You can pass cacerts=None to download using SSL but without verifying the server certificate.
-    '''
+    """
     disable_x509_strict_checking = cacerts == 'calibre-ebook-root-CA.crt'
     cert_file = None
     if cacerts is not None:
@@ -73,7 +78,14 @@ def get_https_resource_securely(
                 # Invalid proxy, ignore
                 pass
 
-    c = HTTPSConnection(hostname, port, cert_file=cert_file, timeout=timeout, disable_x509_strict_checking=disable_x509_strict_checking)
+    c = HTTPSConnection(
+        hostname,
+        port,
+        cert_file=cert_file,
+        timeout=timeout,
+        disable_x509_strict_checking=disable_x509_strict_checking,
+        cadir=cadir,
+    )
     if has_proxy:
         c.set_tunnel(p.hostname, p.port)
 
@@ -84,15 +96,14 @@ def get_https_resource_securely(
             path += '?' + p.query
         c.request('GET', path, headers=headers or {})
         response = c.getresponse()
-        if response.status in (http_client.MOVED_PERMANENTLY, http_client.FOUND, http_client.SEE_OTHER):
+        if response.status in (http.client.MOVED_PERMANENTLY, http.client.FOUND, http.client.SEE_OTHER):
             if max_redirects <= 0:
                 raise ValueError('Too many redirects, giving up')
             newurl = response.getheader('Location', None)
             if newurl is None:
-                raise ValueError('%s returned a redirect response with no Location header' % url)
-            return get_https_resource_securely(
-                newurl, cacerts=cacerts, timeout=timeout, max_redirects=max_redirects-1, get_response=get_response)
-        if response.status != http_client.OK:
+                raise ValueError(f'{url} returned a redirect response with no Location header')
+            return get_https_resource_securely(newurl, cacerts=cacerts, timeout=timeout, max_redirects=max_redirects - 1, get_response=get_response)
+        if response.status != http.client.OK:
             raise HTTPError(url, response.status)
         if get_response:
             return response

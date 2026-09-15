@@ -16,7 +16,7 @@ from functools import partial
 from multiprocessing.pool import ThreadPool as Pool
 from threading import Thread
 
-from polyglot.builtins import as_bytes, unicode_type
+from polyglot.builtins import as_bytes
 
 Job = namedtuple('Job', 'cmd human_text cwd')
 
@@ -32,7 +32,7 @@ def run_worker(job, decorate=True):
     try:
         p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, cwd=cwd)
     except Exception as err:
-        return False, human_text, unicode_type(err)
+        return False, human_text, str(err)
     stdout, stderr = p.communicate()
     if stdout:
         stdout = stdout.decode('utf-8')
@@ -76,8 +76,7 @@ def parallel_build_silent(jobs):
 def parallel_check_output(jobs, log):
     p = Pool(cpu_count)
     with closing(p):
-        for ok, stdout, stderr in p.imap(
-                partial(run_worker, decorate=False), ((j, '') for j in jobs)):
+        for ok, stdout, stderr in p.imap(partial(run_worker, decorate=False), ((j, '') for j in jobs)):
             if not ok:
                 log(stdout)
                 if stderr:

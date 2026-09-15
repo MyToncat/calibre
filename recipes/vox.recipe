@@ -1,25 +1,43 @@
 #!/usr/bin/env python
 # vim:fileencoding=utf-8
-from calibre.web.feeds.news import BasicNewsRecipe
+from calibre.web.feeds.news import BasicNewsRecipe, classes
 
 
 class AdvancedUserRecipe1716097549(BasicNewsRecipe):
-    title          = 'VOX'
+    title = 'VOX'
     language = 'en'
     __author__ = 'Spicy Poison'
     description = (
-            'Vox is a general interest news site for the 21st century. Its mission:'
-            ' to help everyone understand our complicated world, so that we can all help shape it.')
+        'Vox is a general interest news site for the 21st century. Its mission:'
+        ' to help everyone understand our complicated world, so that we can all help shape it.'
+    )
     publisher = 'VOX MEDIA'
     oldest_article = 30
     max_articles_per_feed = 50
     encoding = 'utf-8'
     masthead_url = 'https://logonoid.com/images/vox-logo.png'
     remove_empty_feeds = True
-    auto_cleanup   = True
     ignore_duplicate_articles = {'title', 'url'}
+    scale_news_images = 600, 800
+    compress_news_images = True
 
-    feeds          = [
+    use_embedded_content = False
+    auto_cleanup = False
+
+    keep_only_tags = [
+        # Lede block: section breadcrumb (e.g. "Future Perfect"), h1
+        # title, dek, byline, publication timestamp, and hero image.
+        classes('duet--article--lede'),
+        # Article body container.
+        classes('duet--layout--entry-body'),
+    ]
+
+    remove_tags = [
+        # Social share row appended after the byline.
+        classes('duet--article--share-buttons'),
+    ]
+
+    feeds = [
         ('All Articles', 'https://www.vox.com/rss/index.xml'),
         ('Abortion', 'https://www.vox.com/rss/abortion/index.xml'),
         ('Advice', 'https://www.vox.com/rss/advice/index.xml'),

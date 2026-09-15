@@ -1,17 +1,14 @@
 #!/usr/bin/env python
-
-
-__license__ = 'GPL v3'
-__copyright__ = '2015, Kovid Goyal <kovid at kovidgoyal.net>'
+# License: GPLv3 Copyright: 2015, Kovid Goyal <kovid at kovidgoyal.net>
 
 import posixpath
 import re
+from urllib.parse import urlparse
 from uuid import uuid4
 
 from calibre.ebooks.oeb.base import urlquote
 from calibre.utils.filenames import ascii_text
 from calibre.utils.localization import __
-from polyglot.urllib import urlparse
 
 
 def start_text(tag, prefix_len=0, top_level=True):
@@ -28,7 +25,6 @@ def start_text(tag, prefix_len=0, top_level=True):
 
 
 class TOCItem:
-
     def __init__(self, title, bmark, level):
         self.title, self.bmark, self.level = title, bmark, level
         self.is_first = self.is_last = False
@@ -36,7 +32,7 @@ class TOCItem:
     def serialize(self, body, makeelement):
         p = makeelement(body, 'w:p', append=False)
         ppr = makeelement(p, 'w:pPr')
-        makeelement(ppr, 'w:pStyle', w_val="Normal")
+        makeelement(ppr, 'w:pStyle', w_val='Normal')
         makeelement(ppr, 'w:ind', w_left='0', w_firstLineChars='0', w_firstLine='0', w_leftChars=str(200 * self.level))
         if self.is_first:
             makeelement(ppr, 'w:pageBreakBefore', w_val='off')
@@ -66,7 +62,6 @@ def sanitize_bookmark_name(base):
 
 
 class LinksManager:
-
     def __init__(self, namespace, document_relationships, log):
         self.namespace = namespace
         self.log = log
@@ -84,7 +79,7 @@ class LinksManager:
         if key in self.anchor_map:
             return self.anchor_map[key]
         if anchor == self.top_anchor:
-            name = ('Top of %s' % posixpath.basename(current_item.href))
+            name = f'Top of {posixpath.basename(current_item.href)}'
             self.document_hrefs.add(current_item.href)
         else:
             name = start_text(html_tag).strip() or anchor
@@ -92,7 +87,7 @@ class LinksManager:
         i, bname = 0, name
         while name in self.used_bookmark_names:
             i += 1
-            name  = bname + ('_%d' % i)
+            name = bname + f'_{i}'
         self.anchor_map[key] = name
         self.used_bookmark_names.add(name)
         return name
@@ -129,7 +124,7 @@ class LinksManager:
                     bmark = self.anchor_map[(href, self.top_anchor)]
                 return make_link(parent, anchor=bmark, tooltip=tooltip)
             else:
-                self.log.warn('Ignoring internal hyperlink with href (%s) pointing to unknown destination' % url)
+                self.log.warn(f'Ignoring internal hyperlink with href ({url}) pointing to unknown destination')
         if purl.scheme in {'http', 'https', 'ftp'}:
             if url not in self.external_links:
                 self.external_links[url] = self.document_relationships.add_relationship(url, self.namespace.names['LINKS'], target_mode='External')
@@ -149,7 +144,7 @@ class LinksManager:
                     bmark = self.anchor_map[(href, self.top_anchor)]
                 self.toc.append(TOCItem(toc.title, bmark, level))
         for child in toc:
-            self.process_toc_node(child, level+1)
+            self.process_toc_node(child, level + 1)
 
     def process_toc_links(self, oeb):
         self.toc = []
@@ -164,7 +159,7 @@ class LinksManager:
 
     def serialize_toc(self, body, primary_heading_style):
         pbb = body[0].xpath('//*[local-name()="pageBreakBefore"]')[0]
-        pbb.set('{%s}val' % self.namespace.namespaces['w'], 'on')
+        pbb.set('{{{}}}val'.format(self.namespace.namespaces['w']), 'on')
         for block in reversed(self.toc):
             block.serialize(body, self.namespace.makeelement)
         title = __('Table of Contents')

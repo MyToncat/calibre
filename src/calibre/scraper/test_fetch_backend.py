@@ -7,18 +7,18 @@ import os
 import unittest
 from threading import Event, Thread
 
+from calibre.constants import ismacos, iswindows
+
 from .qt import Browser, WebEngineBrowser
 
+is_ci = os.environ.get('CI', '').lower() == 'true'
 skip = ''
 is_sanitized = 'libasan' in os.environ.get('LD_PRELOAD', '')
 if is_sanitized:
     skip = 'Skipping Scraper tests as ASAN is enabled'
-elif 'SKIP_QT_BUILD_TEST' in os.environ:
-    skip = 'Skipping Scraper tests as it causes crashes in macOS VM'
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
-
     def __init__(self, test_obj, *a):
         self.test_obj = test_obj
         super().__init__(*a)
@@ -72,14 +72,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
 @unittest.skipIf(skip, skip)
 class TestFetchBackend(unittest.TestCase):
-
     ae = unittest.TestCase.assertEqual
 
     def setUp(self):
         self.server_started = Event()
         self.server_thread = Thread(target=self.run_server, daemon=True)
         self.server_thread.start()
-        if not self.server_started.wait(15):
+        # For some reason binding the server socket has a 30 second timeout on macOS. DNS related?
+        if not self.server_started.wait(60):
             raise Exception('Test server failed to start')
         self.request_count = 0
         self.dont_send_response = self.dont_send_body = False
@@ -91,6 +91,7 @@ class TestFetchBackend(unittest.TestCase):
     def test_recipe_browser_qt(self):
         self.do_recipe_browser_test(Browser)
 
+    @unittest.skipIf(is_ci and (iswindows or ismacos), 'WebEngine browser test hangs on CI')
     def test_recipe_browser_webengine(self):
         self.do_recipe_browser_test(WebEngineBrowser)
 
@@ -101,7 +102,7 @@ class TestFetchBackend(unittest.TestCase):
         br = browser_class(user_agent='test-ua', headers=(('th', '1'),), start_worker=True)
 
         def u(path=''):
-            return f'http://localhost:{self.port}{path}'
+            return f'http://{self.host}:{self.port}{path}'
 
         def get(path='', headers=None, timeout=None, data=None):
             url = u(path)
@@ -109,10 +110,10 @@ class TestFetchBackend(unittest.TestCase):
                 req = Request(url, headers=headers)
             else:
                 req = url
-            res = br.open(req, data=data, timeout=timeout)
-            raw = res.read()
-            ans = json.loads(raw)
-            ans['final_url'] = res.geturl()
+            with br.open(req, data=data, timeout=timeout) as res:
+                raw = res.read()
+                ans = json.loads(raw)
+                ans['final_url'] = res.geturl()
             return ans
 
         def test_with_timeout(no_response=True):
@@ -136,13 +137,16 @@ class TestFetchBackend(unittest.TestCase):
                     ans.extend(v)
             self.ae(expected, tuple(ans))
 
+        def has_header(name):
+            self.assertIn(name.lower(), [h.lower() for h in r['headers']])
+
         try:
             r = get()
             self.ae(r['method'], 'GET')
             self.ae(r['request_count'], 1)
             header('th', '1')
             header('User-Agent', 'test-ua')
-            self.assertIn('Accept-Encoding', r['headers'])
+            has_header('accept-encoding')
             r = get()
             self.ae(r['request_count'], 2)
             header('Cookie', 'sc=1')
@@ -169,15 +173,28 @@ class TestFetchBackend(unittest.TestCase):
             br.shutdown()
 
     def run_server(self):
-        from http.server import ThreadingHTTPServer
+        from http.server import HTTPServer
+        from socketserver import TCPServer, ThreadingMixIn
 
         def create_handler(*a):
             ans = Handler(self, *a)
             return ans
 
-        with ThreadingHTTPServer(("", 0), create_handler) as httpd:
+        class Server(ThreadingMixIn, HTTPServer):
+            # Each connection is handled in its own thread so a blocked keep-alive
+            # connection (e.g. after a timeout test) doesn't prevent the server from
+            # accepting the follow-up connection for a redirect target.
+            daemon_threads = True
+
+            def server_bind(self):
+                # Avoid calling socket.getfqdn() which is slow on some systems
+                TCPServer.server_bind(self)
+                self.server_name, self.server_port = self.server_address[:2]
+
+        with Server(('localhost', 0), create_handler) as httpd:
             self.server = httpd
-            self.port = httpd.server_address[1]
+            self.port = httpd.server_port
+            self.host = httpd.server_name
             self.server_started.set()
             httpd.serve_forever()
 

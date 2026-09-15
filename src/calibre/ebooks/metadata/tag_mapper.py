@@ -1,7 +1,6 @@
 #!/usr/bin/env python
 # License: GPLv3 Copyright: 2015, Kovid Goyal <kovid at kovidgoyal.net>
 
-
 from collections import deque
 
 from calibre.utils.icu import lower as icu_lower
@@ -11,23 +10,29 @@ from polyglot.builtins import as_unicode
 
 def compile_pat(pat):
     import regex
+
     REGEX_FLAGS = regex.VERSION1 | regex.WORD | regex.FULLCASE | regex.IGNORECASE | regex.UNICODE
     return regex.compile(pat, flags=REGEX_FLAGS)
 
 
-def matcher(rule):
+def matcher(rule, separator=','):
     import unicodedata
+
     def n(x):
         return unicodedata.normalize('NFC', as_unicode(x or '', errors='replace'))
 
     mt = rule['match_type']
     if mt == 'one_of':
-        tags = {icu_lower(n(x.strip())) for x in rule['query'].split(',')}
-        return lambda x: x in tags
+        if separator:
+            tags = {icu_lower(n(x.strip())) for x in rule['query'].split(separator)}
+            return tags.__contains__
+        return icu_lower(n(rule['query'].strip())).__eq__
 
     if mt == 'not_one_of':
-        tags = {icu_lower(n(x.strip())) for x in rule['query'].split(',')}
-        return lambda x: x not in tags
+        if separator:
+            tags = {icu_lower(n(x.strip())) for x in rule['query'].split(',')}
+            return lambda x: x not in tags
+        return icu_lower(n(rule['query'].strip())).__ne__
 
     if mt == 'matches':
         pat = compile_pat(n(rule['query']))
@@ -44,7 +49,7 @@ def matcher(rule):
     return lambda x: False
 
 
-def apply_rules(tag, rules):
+def apply_rules(tag, rules, separator=','):
     ans = []
     tags = deque()
     tags.append(tag)
@@ -66,7 +71,7 @@ def apply_rules(tag, rules):
                         tag = compile_pat(rule['query']).sub(rule['replace'], tag)
                     else:
                         tag = rule['replace']
-                    if ',' in tag:
+                    if separator and separator in tag:
                         replacement_tags = []
                         self_added = False
                         for rtag in (x.strip() for x in tag.split(',')):
@@ -89,6 +94,7 @@ def apply_rules(tag, rules):
                     break
                 if ac == 'titlecase':
                     from calibre.utils.titlecase import titlecase
+
                     ans.append(titlecase(tag))
                     break
                 if ac == 'lower':
@@ -113,24 +119,24 @@ def apply_rules(tag, rules):
 
 
 def uniq(vals, kmap=icu_lower):
-    ''' Remove all duplicates from vals, while preserving order. kmap must be a
-    callable that returns a hashable value for every item in vals '''
+    """Remove all duplicates from vals, while preserving order. kmap must be a
+    callable that returns a hashable value for every item in vals"""
     vals = vals or ()
     lvals = (kmap(x) for x in vals)
     seen = set()
     seen_add = seen.add
-    return list(x for x, k in zip(vals, lvals) if k not in seen and not seen_add(k))
+    return [x for x, k in zip(vals, lvals) if k not in seen and not seen_add(k)]  # ty: ignore[redundant-condition]
 
 
-def map_tags(tags, rules=()):
+def map_tags(tags, rules=(), separator=','):
     if not tags:
         return []
     if not rules:
         return list(tags)
-    rules = [(r, matcher(r)) for r in rules]
+    rules = [(r, matcher(r, separator)) for r in rules]
     ans = []
     for t in tags:
-        ans.extend(apply_rules(t, rules))
+        ans.extend(apply_rules(t, rules, separator))
     return uniq(list(filter(None, ans)))
 
 
@@ -138,23 +144,22 @@ def find_tests():
     import unittest
 
     class TestTagMapper(unittest.TestCase):
-
         def test_tag_mapper(self):
 
             def rule(action, query, replace=None, match_type='one_of'):
-                ans = {'action':action, 'query': query, 'match_type':match_type}
+                ans = {'action': action, 'query': query, 'match_type': match_type}
                 if replace is not None:
                     ans['replace'] = replace
                 return ans
 
-            def run(rules, tags, expected):
+            def run(rules, tags, expected, sep=','):
                 if isinstance(rules, dict):
                     rules = [rules]
                 if isinstance(tags, str):
-                    tags = [x.strip() for x in tags.split(',')]
+                    tags = [x.strip() for x in tags.split(sep)] if sep else [tags]
                 if isinstance(expected, str):
-                    expected = [x.strip() for x in expected.split(',')]
-                ans = map_tags(tags, rules)
+                    expected = [x.strip() for x in expected.split(sep)] if sep else [expected]
+                ans = map_tags(tags, rules, sep)
                 self.assertEqual(ans, expected)
 
             run(rule('capitalize', 't1,t2'), 't1,x1', 'T1,x1')
@@ -176,9 +181,12 @@ def find_tests():
             run(rule('split', '/', '/', 'has'), '/a/', 'a')
             run(rule('split', 'a,b', '/'), 'a,b', 'a,b')
             run(rule('split', 'a b', ' ', 'has'), 'a b', 'a,b')
+            run(rule('upper', 'a, b, c'), 'a, b, c', 'A, B, C', sep='')
+
     return unittest.defaultTestLoader.loadTestsFromTestCase(TestTagMapper)
 
 
 if __name__ == '__main__':
     from calibre.utils.run_tests import run_cli
+
     run_cli(find_tests())

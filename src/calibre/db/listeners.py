@@ -43,9 +43,14 @@ class EventType(Enum):
     #: When the indexing progress changes
     indexing_progress_changed = auto()
 
+    #: When the notes associated with item(s) are changed, with arguments: (field_name, item_ids)
+    notes_changed = auto()
+
+    #: When the links associated with items(s) are changed, with arguments: (field_name, item_ids)
+    links_changed = auto()
+
 
 class EventDispatcher(Thread):
-
     def __init__(self):
         Thread.__init__(self, name='DBListener', daemon=True)
         self.refs = []

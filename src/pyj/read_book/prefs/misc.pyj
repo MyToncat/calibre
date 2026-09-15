@@ -3,16 +3,17 @@
 from __python__ import bound_methods, hash_literals
 
 from elementmaker import E
+from gettext import gettext as _
 
 from book_list.globals import get_session_data
 from dom import unique_id
-from gettext import gettext as _
 from read_book.globals import ui_operations
 from read_book.prefs.utils import create_button_box
 from session import session_defaults, standalone_reader_defaults as DEFAULTS
 from widgets import create_button
 
 CONTAINER = unique_id('standalone-misc-settings')
+
 
 def restore_defaults():
     container = get_container()
@@ -41,7 +42,7 @@ def create_misc_panel(container, apply_func, cancel_func):
         ans.checked = settings[name] if jstype(settings[name]) is 'boolean' else DEFAULTS[name]
         return E.div(style='margin-top:1ex', E.label(ans, '\xa0' + text))
 
-    sai = E.input(name='sync_annots_user', title=_(
+    sai = E.input(name='sync_annots_user', type='text', title=_(
         'The username of a Content server user that you want all annotations synced with.'
         ' Use the special value * to sync with anonymous users'
     ))

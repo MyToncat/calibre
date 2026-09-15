@@ -9,7 +9,7 @@ from itertools import count
 from bypy.constants import is64bit
 from bypy.utils import run
 
-WIX = os.path.expanduser('~/.dotnet/tools/wix.exe')
+WIX = os.path.join(os.environ['USERPROFILE'], r'.dotnet\tools\wix.exe')
 if is64bit:
     UPGRADE_CODE = '5DD881FF-756B-4097-9D82-8C0F11D521EA'
 else:
@@ -51,6 +51,9 @@ def create_installer(env, compression_level='9'):
         x64=' 64bit' if is64bit else '',
         compression='high',
         app_components=components,
+        main_app_uid=calibre_constants['MAIN_APP_UID'],
+        viewer_app_uid=calibre_constants['VIEWER_APP_UID'],
+        editor_app_uid=calibre_constants['EDITOR_APP_UID'],
         exe_map=smap,
         main_icon=j(env.src_root, 'icons', 'library.ico'),
         viewer_icon=j(env.src_root, 'icons', 'viewer.ico'),

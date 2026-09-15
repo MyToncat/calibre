@@ -1,7 +1,6 @@
 #!/usr/bin/env python
 # License: GPLv3 Copyright: 2023, Kovid Goyal <kovid at kovidgoyal.net>
 
-
 import os
 import shutil
 import tempfile
@@ -12,7 +11,7 @@ from calibre.db.tests.base import BaseTest
 from calibre.utils.resources import get_image_path
 
 
-def test_notes_restore(self: 'NotesTest'):
+def test_notes_restore(self: NotesTest):
     cache, notes = self.create_notes_db()
     authors = sorted(cache.all_field_ids('authors'))
     doc = 'simple notes for an author'
@@ -22,7 +21,8 @@ def test_notes_restore(self: 'NotesTest'):
     doc2 = 'simple notes for an author2'
     cache.set_notes_for('authors', authors[1], doc2, resource_hashes=(h2,))
 
-def test_notes_api(self: 'NotesTest'):
+
+def test_notes_api(self: NotesTest):
     cache, notes = self.create_notes_db()
     authors = sorted(cache.all_field_ids('authors'))
     self.ae(cache.notes_for('authors', authors[0]), '')
@@ -47,7 +47,7 @@ def test_notes_api(self: 'NotesTest'):
 
     # check retirement
     h2 = cache.add_notes_resource(b'resource2', 'r1.jpg')
-    self.ae(note_id, cache.set_notes_for('authors', authors[0], doc2, resource_hashes=(h1,h2)))
+    self.ae(note_id, cache.set_notes_for('authors', authors[0], doc2, resource_hashes=(h1, h2)))
     self.ae(-1, cache.set_notes_for('authors', authors[0], ''))
     self.ae(cache.notes_for('authors', authors[0]), '')
     self.ae(cache.notes_resources_used_by('authors', authors[0]), frozenset())
@@ -81,7 +81,8 @@ def test_notes_api(self: 'NotesTest'):
     cache.set_notes_for('authors', authors[0], '', resource_hashes=())
     self.ae(len(os.listdir(notes.retired_dir)), 1)
 
-def test_cache_api(self: 'NotesTest'):
+
+def test_cache_api(self: NotesTest):
     cache, notes = self.create_notes_db()
     authors = cache.field_for('authors', 1)
     author_id = cache.get_item_id('authors', authors[0])
@@ -90,8 +91,17 @@ def test_cache_api(self: 'NotesTest'):
     h2 = cache.add_notes_resource(b'resource2', 'r1.jpg')
     cache.set_notes_for('authors', author_id, doc, resource_hashes=(h1, h2))
     nd = cache.notes_data_for('authors', author_id)
-    self.ae(nd, {'id': 1, 'ctime': nd['ctime'], 'mtime': nd['ctime'], 'searchable_text': authors[0] + '\n' + doc,
-                 'doc': doc, 'resource_hashes': frozenset({h1, h2})})
+    self.ae(
+        nd,
+        {
+            'id': 1,
+            'ctime': nd['ctime'],
+            'mtime': nd['ctime'],
+            'searchable_text': authors[0] + '\n' + doc,
+            'doc': doc,
+            'resource_hashes': frozenset({h1, h2}),
+        },
+    )
     time.sleep(0.01)
     cache.set_notes_for('authors', author_id, doc, resource_hashes=(h1, h2))
     n2d = cache.notes_data_for('authors', author_id)
@@ -111,11 +121,11 @@ def test_cache_api(self: 'NotesTest'):
     self.ae(cache.get_notes_resource(h1)['data'], b'resource1')
     self.ae(cache.get_notes_resource(h2)['data'], b'resource2')
     # test removing author from db retires notes
-    cache.set_field('authors', {bid:('New Author',) for bid in cache.all_book_ids()})
+    cache.set_field('authors', {bid: ('New Author',) for bid in cache.all_book_ids()})
     self.ae(len(cache.all_field_ids('authors')), 1)
     self.ae(len(os.listdir(notes.retired_dir)), 1)
     # test re-using of retired note
-    cache.set_field('authors', {1:'Author One'})
+    cache.set_field('authors', {1: 'Author One'})
     author_id = cache.get_item_id('authors', 'Author One')
     self.ae(cache.notes_resources_used_by('authors', author_id), frozenset({h1, h2}))
     self.ae(cache.get_notes_resource(h1)['data'], b'resource1')
@@ -151,6 +161,7 @@ def test_cache_api(self: 'NotesTest'):
         exported = cache.export_note('authors', author_id)
         self.assertIn('<p>test simple exim <img src="', exported)
         from html5_parser import parse
+
         root = parse(exported)
         self.ae(root.xpath('//img/@data-filename'), ['r 1.png', 'r 2.png'])
         cache.set_notes_for('authors', author_id, '')
@@ -168,7 +179,39 @@ def test_cache_api(self: 'NotesTest'):
         self.ae(sorted(res, key=itemgetter('name')), sorted(res2, key=itemgetter('name')))
 
 
-def test_fts(self: 'NotesTest'):
+def test_rename_and_delete_custom_column(self: NotesTest):
+    cache, notes = self.create_notes_db()
+    doc = 'notes for a custom column item'
+
+    # set up notes on #tags
+    tags = cache.field_for('#tags', 1)
+    tag_id = cache.get_item_id('#tags', tags[0])
+    h1 = cache.add_notes_resource(b'resource1', 'r1.jpg')
+    h2 = cache.add_notes_resource(b'resource2', 'r1.jpg')
+    cache.set_notes_for('#tags', tag_id, doc, resource_hashes=(h1, h2))
+    self.ae(cache.notes_for('#tags', tag_id), doc)
+    self.ae(cache.notes_resources_used_by('#tags', tag_id), frozenset({h1, h2}))
+
+    # test renaming the lookup name of a custom column preserves notes
+    num = cache.backend.custom_field_metadata('tags')['num']
+    cache.set_custom_column_metadata(num, label='newtags')
+    cache.close()
+    cache = self.init_cache(cache.backend.library_path)
+    self.ae(cache.notes_for('#newtags', tag_id), doc)
+    self.ae(cache.notes_resources_used_by('#newtags', tag_id), frozenset({h1, h2}))
+    self.ae(cache.get_notes_resource(h1)['data'], b'resource1')
+    self.ae(cache.get_notes_resource(h2)['data'], b'resource2')
+    # old name should no longer have notes
+    self.ae(cache.notes_for('#tags', tag_id), '')
+
+    # test deleting a custom column immediately removes its notes
+    cache.delete_custom_column('newtags')
+    self.ae(cache.notes_for('#newtags', tag_id), '')
+    self.assertIsNone(cache.get_notes_resource(h1))
+    self.assertIsNone(cache.get_notes_resource(h2))
+
+
+def test_fts(self: NotesTest):
     cache, _ = self.create_notes_db()
     authors = sorted(cache.all_field_ids('authors'))
     cache.set_notes_for('authors', authors[0], 'Wunderbar wunderkind common')
@@ -178,12 +221,13 @@ def test_fts(self: 'NotesTest'):
     cache.set_notes_for('tags', tags[1], 'Jeepers, Batman! common')
 
     def ids_for_search(x, restrict_to_fields=()):
-        return {
-            (x['field'], x['item_id']) for x in cache.search_notes(x, restrict_to_fields=restrict_to_fields)
-        }
+        return {(x['field'], x['item_id']) for x in cache.search_notes(x, restrict_to_fields=restrict_to_fields)}
 
     self.ae(ids_for_search('wunderbar'), {('authors', authors[0])})
-    self.ae(ids_for_search('common'), {('authors', authors[0]), ('authors', authors[1]), ('tags', tags[0]), ('tags', tags[1])})
+    self.ae(
+        ids_for_search('common'),
+        {('authors', authors[0]), ('authors', authors[1]), ('tags', tags[0]), ('tags', tags[1])},
+    )
     self.ae(ids_for_search('common', ('tags',)), {('tags', tags[0]), ('tags', tags[1])})
     self.ae(ids_for_search(''), ids_for_search('common'))
     self.ae(ids_for_search('', ('tags',)), ids_for_search('common', ('tags',)))
@@ -194,7 +238,6 @@ def test_fts(self: 'NotesTest'):
 
 
 class NotesTest(BaseTest):
-
     ae = BaseTest.assertEqual
 
     def create_notes_db(self):
@@ -206,3 +249,4 @@ class NotesTest(BaseTest):
         test_fts(self)
         test_cache_api(self)
         test_notes_api(self)
+        test_rename_and_delete_custom_column(self)

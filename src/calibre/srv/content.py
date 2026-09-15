@@ -1,8 +1,5 @@
 #!/usr/bin/env python
-
-
-__license__ = 'GPL v3'
-__copyright__ = '2015, Kovid Goyal <kovid at kovidgoyal.net>'
+# License: GPLv3 Copyright: 2015, Kovid Goyal <kovid at kovidgoyal.net>
 
 import base64
 import errno
@@ -13,10 +10,12 @@ from functools import partial
 from io import BytesIO
 from json import load as load_json_file
 from threading import Lock
+from urllib.parse import quote
 
 from calibre import fit_image, guess_type, sanitize_file_name
 from calibre.constants import config_dir, iswindows
-from calibre.db.constants import RESOURCE_URL_SCHEME
+from calibre.customize.ui import apply_null_metadata
+from calibre.db.constants import DATA_DIR_NAME, DATA_FILE_PATTERN, RESOURCE_URL_SCHEME
 from calibre.db.errors import NoSuchFormat
 from calibre.ebooks.covers import cprefs, generate_cover, override_prefs, scale_cover, set_use_roman
 from calibre.ebooks.metadata import authors_to_string
@@ -24,21 +23,22 @@ from calibre.ebooks.metadata.meta import set_metadata
 from calibre.ebooks.metadata.opf2 import metadata_to_opf
 from calibre.library.save_to_disk import find_plugboard
 from calibre.srv.errors import BookNotFound, HTTPBadRequest, HTTPNotFound
+from calibre.srv.metadata import encode_stat_result
 from calibre.srv.routes import endpoint, json
 from calibre.srv.utils import get_db, get_use_roman, http_date
 from calibre.utils.config_base import tweaks
 from calibre.utils.date import timestampfromdt
-from calibre.utils.filenames import ascii_filename, atomic_rename, make_long_path_useable
+from calibre.utils.filenames import ascii_filename, atomic_rename, make_long_path_useable, path_from_root
 from calibre.utils.img import image_from_data, scale_image
 from calibre.utils.localization import _
 from calibre.utils.resources import get_image_path as I
 from calibre.utils.resources import get_path as P
 from calibre.utils.shared_file import share_open
-from polyglot.binary import as_hex_unicode
-from polyglot.urllib import quote
+from calibre.utils.speedups import ReadOnlyFileBuffer
+from polyglot.binary import as_hex_unicode, from_base64_bytes
 
 plugboard_content_server_value = 'content_server'
-plugboard_content_server_formats = ['epub', 'mobi', 'azw3']
+plugboard_content_server_formats = ['epub', 'mobi', 'azw3', 'pdf']
 update_metadata_in_fmts = frozenset(plugboard_content_server_formats)
 lock = Lock()
 
@@ -63,15 +63,15 @@ def open_for_write(fname):
 
 
 def create_file_copy(ctx, rd, prefix, library_id, book_id, ext, mtime, copy_func, extra_etag_data=''):
-    ''' We cannot copy files directly from the library folder to the output
+    """We cannot copy files directly from the library folder to the output
     socket, as this can potentially lock the library for an extended period. So
     instead we copy out the data from the library folder into a temp folder. We
     make sure to only do this copy once, using the previous copy, if there have
-    been no changes to the data for the file since the last copy. '''
+    been no changes to the data for the file since the last copy."""
     global rename_counter
 
     # Avoid too many items in a single directory for performance
-    base = os.path.join(rd.tdir, 'fcache', (('%x' % book_id)[-3:]))
+    base = os.path.join(rd.tdir, 'fcache', ((f'{book_id:x}')[-3:]))
     if iswindows:
         base = '\\\\?\\' + os.path.abspath(base)  # Ensure fname is not too long for windows' API
 
@@ -97,7 +97,7 @@ def create_file_copy(ctx, rd, prefix, library_id, book_id, ext, mtime, copy_func
                     # On windows in order to re-use bname, we have to rename it
                     # before deleting it
                     rename_counter += 1
-                    dname = os.path.join(base, '_%x' % rename_counter)
+                    dname = os.path.join(base, f'_{rename_counter:x}')
                     atomic_rename(fname, dname)
                     os.remove(dname)
                 else:
@@ -149,8 +149,10 @@ def cover(ctx, rd, library_id, db, book_id, width=None, height=None):
         return generated_cover(ctx, rd, library_id, db, book_id, width, height)
     prefix = 'cover'
     if width is None and height is None:
+
         def copy_func(dest):
             db.copy_cover_to(book_id, dest)
+
     else:
         prefix += f'-{width}x{height}'
 
@@ -160,6 +162,7 @@ def cover(ctx, rd, library_id, db, book_id, width=None, height=None):
             quality = min(99, max(50, tweaks['content_server_thumbnail_compression_quality']))
             data = scale_image(buf.getvalue(), width=width, height=height, compression_quality=quality)[-1]
             dest.write(data)
+
     return create_file_copy(ctx, rd, prefix, library_id, book_id, 'jpg', mtime, copy_func)
 
 
@@ -171,6 +174,38 @@ def fname_for_content_disposition(fname, as_encoded_unicode=False):
     else:
         fname = ascii_filename(fname).replace('"', '_')
     return fname
+
+
+# Mimetypes that can run scripts in the browser, either directly or via an
+# embedded stylesheet, when rendered as a document rather than downloaded.
+SCRIPTABLE_MIMETYPES = frozenset({
+    'text/html',
+    'text/xml',
+    'application/xhtml+xml',
+    'application/xml',
+    'image/svg+xml',
+})
+
+
+def needs_sandboxing(content_type: str) -> bool:
+    mt = content_type.partition(';')[0].strip().lower()
+    if mt in SCRIPTABLE_MIMETYPES:
+        return True
+    # PDFs, images and plain text are rendered inertly by browsers. Anything
+    # unrecognized is sandboxed since the browser may sniff it as HTML.
+    return not (mt == 'application/pdf' or mt.startswith(('image/', 'text/')))
+
+
+def add_sandbox_headers(rd, content_type: str) -> None:
+    """
+    Prevent user supplied content that is rendered inline by the browser from
+    being able to script the server's origin. The sandbox directive applies to
+    top level documents as well, so it protects both direct navigation to the
+    URL and embedding of it in a frame.
+    """
+    if needs_sandboxing(content_type):
+        rd.outheaders['X-Content-Type-Options'] = 'nosniff'
+        rd.outheaders['Content-Security-Policy'] = 'sandbox allow-scripts allow-downloads'
 
 
 def book_filename(rd, book_id, mi, fmt, as_encoded_unicode=False):
@@ -216,14 +251,18 @@ def book_fmt(ctx, rd, library_id, db, book_id, fmt):
                 cdata = db.cover(book_id)
                 if cdata:
                     mi.cover_data = ('jpeg', cdata)
-            set_metadata(dest, mi, fmt)
+            with apply_null_metadata:
+                set_metadata(dest, mi, fmt)
             dest.seek(0)
 
-    cd = rd.query.get('content_disposition', 'attachment')
-    rd.outheaders['Content-Disposition'] = '''{}; filename="{}"; filename*=utf-8''{}'''.format(
-        cd, book_filename(rd, book_id, mi, fmt), book_filename(rd, book_id, mi, fmt, as_encoded_unicode=True))
+    cd = sanitize_content_disposition(rd.query.get('content_disposition', 'attachment'))
+    rd.outheaders['Content-Disposition'] = (
+        f'''{cd}; filename="{book_filename(rd, book_id, mi, fmt)}"; filename*=utf-8''{book_filename(rd, book_id, mi, fmt, as_encoded_unicode=True)}'''
+    )
 
     return create_file_copy(ctx, rd, 'fmt', library_id, book_id, fmt, mtime, copy_func, extra_etag_data=extra_etag_data)
+
+
 # }}}
 
 
@@ -232,11 +271,10 @@ def static(ctx, rd, what):
     if not what:
         raise HTTPNotFound()
     base = P('content-server', allow_user_override=False)
-    path = os.path.abspath(os.path.join(base, *what.split('/')))
-    if not path.startswith(base) or ':' in what:
+    try:
+        path = path_from_root(base, what, reject_colon=True)
+    except ValueError:
         raise HTTPNotFound('Naughty, naughty!')
-    path = os.path.relpath(path, base).replace(os.sep, '/')
-    path = P('content-server/' + path)
     try:
         return share_open(path, 'rb')
     except OSError:
@@ -245,7 +283,17 @@ def static(ctx, rd, what):
 
 @endpoint('/favicon.png', auth_required=False, cache_control=24)
 def favicon(ctx, rd):
-    return share_open(I('lt.png'), 'rb')
+    return share_open(I('favicon-512.png'), 'rb')
+
+
+@endpoint('/favicon.svg', auth_required=False, cache_control=24)
+def favicon_svg(ctx, rd):
+    return share_open(I('calibre.svg'), 'rb')
+
+
+@endpoint('/favicon-192.png', auth_required=False, cache_control=24)
+def favicon_192(ctx, rd):
+    return share_open(I('favicon-192.png'), 'rb')
 
 
 @endpoint('/apple-touch-icon.png', auth_required=False, cache_control=24)
@@ -265,23 +313,23 @@ def icon(ctx, rd, which):
         raise HTTPNotFound()
     if which.startswith('_'):
         base = os.path.join(config_dir, 'tb_icons')
-        path = os.path.abspath(os.path.join(base, *which[1:].split('/')))
-        if not path.startswith(base) or ':' in which:
+        try:
+            path = path_from_root(base, which[1:], reject_colon=True)
+        except ValueError:
             raise HTTPNotFound('Naughty, naughty!')
     else:
         base = P('images', allow_user_override=False)
-        path = os.path.abspath(os.path.join(base, *which.split('/')))
-        if not path.startswith(base) or ':' in which:
+        try:
+            path = path_from_root(base, which, reject_colon=True)
+        except ValueError:
             raise HTTPNotFound('Naughty, naughty!')
-        path = os.path.relpath(path, base).replace(os.sep, '/')
-        path = P('images/' + path)
     if sz == 'full':
         try:
             return share_open(path, 'rb')
         except OSError:
             raise HTTPNotFound()
     with lock:
-        cached = os.path.join(rd.tdir, 'icons', '%d-%s.png' % (sz, which))
+        cached = os.path.join(rd.tdir, 'icons', f'{sz}-{which}.png')
         try:
             return share_open(cached, 'rb')
         except OSError:
@@ -304,10 +352,10 @@ def icon(ctx, rd, which):
 
 @endpoint('/reader-background/{encoded_fname}', android_workaround=True)
 def reader_background(ctx, rd, encoded_fname):
-    base = os.path.abspath(os.path.normapth(os.path.join(config_dir, 'viewer', 'background-images')))
-    fname = bytes.fromhex(encoded_fname)
-    q = os.path.abspath(os.path.normpath(os.path.join(base, fname)))
-    if not q.startswith(base):
+    base = os.path.abspath(os.path.normpath(os.path.join(config_dir, 'viewer', 'background-images')))
+    try:
+        q = path_from_root(base, bytes.fromhex(encoded_fname).decode('utf-8'), reject_colon=iswindows)
+    except ValueError, UnicodeDecodeError:
         raise HTTPNotFound(f'Reader background {encoded_fname} not found')
     try:
         return share_open(make_long_path_useable(q), 'rb')
@@ -318,6 +366,7 @@ def reader_background(ctx, rd, encoded_fname):
 @endpoint('/reader-profiles/get-all', postprocess=json)
 def get_all_reader_profiles(ctx, rd):
     from calibre.gui2.viewer.config import load_viewer_profiles
+
     which = 'user:'
     if rd.username:
         which += rd.username
@@ -334,6 +383,7 @@ def save_reader_profile(ctx, rd):
     except Exception as err:
         raise HTTPBadRequest(f'Invalid query: {err}')
     from calibre.gui2.viewer.config import save_viewer_profile
+
     which = 'user:'
     if rd.username:
         which += rd.username
@@ -347,10 +397,10 @@ def get(ctx, rd, what, book_id, library_id):
     try:
         book_id = int(book_id)
     except Exception:
-        raise HTTPNotFound('Book with id %r does not exist' % book_id)
+        raise HTTPNotFound(f'Book with id {book_id!r} does not exist')
     db = get_db(ctx, rd, library_id)
     if db is None:
-        raise HTTPNotFound('Library %r not found' % library_id)
+        raise HTTPNotFound(f'Library {library_id!r} not found')
     with db.safe_read_lock:
         if not ctx.has_id(rd, db, book_id):
             raise BookNotFound(book_id, db)
@@ -386,6 +436,7 @@ def get(ctx, rd, what, book_id, library_id):
             return metadata_to_opf(mi)
         elif what == 'json':
             from calibre.srv.ajax import book_to_json
+
             data, last_modified = book_to_json(ctx, rd, db, book_id)
             rd.outheaders['Last-Modified'] = http_date(timestampfromdt(last_modified))
             return json(ctx, rd, get, data)
@@ -413,14 +464,19 @@ def _get_note(ctx, rd, db, field, item_id, library_id):
     resources = note_data.pop('resource_hashes', None)
     if resources:
         import re
+
         html = note_data['doc']
+
         def r(x):
             scheme, digest = x.split(':', 1)
             return f'{scheme}/{digest}'
+
         pat = re.compile(rf'{RESOURCE_URL_SCHEME}://({{}})'.format('|'.join(map(r, resources))))
+
         def sub(m):
             s, d = m.group(1).split('/', 1)
             return resource_hash_to_url(ctx, s, d, library_id)
+
         note_data['doc'] = pat.sub(sub, html)
     rd.outheaders['Last-Modified'] = http_date(note_data['mtime'])
     return note_data['doc']
@@ -428,14 +484,16 @@ def _get_note(ctx, rd, db, field, item_id, library_id):
 
 @endpoint('/get-note/{field}/{item_id}/{library_id=None}', types={'item_id': int})
 def get_note(ctx, rd, field, item_id, library_id):
-    '''
+    """
     Get the note as text/html for the specified field and item id.
-    '''
+    """
     db = get_db(ctx, rd, library_id)
     if db is None:
         raise HTTPNotFound(f'Library {library_id} not found')
     html = _get_note(ctx, rd, db, field, item_id, library_id)
-    rd.outheaders['Content-Type'] = 'text/html; charset=UTF-8'
+    # Keep this mimetype text/plain to avoid XSS in case someone convinces a
+    # user to use this endpoint directly
+    rd.outheaders['Content-Type'] = 'text/plain; charset=UTF-8'
     return html
 
 
@@ -453,9 +511,9 @@ def get_note_from_val(ctx, rd, field, item, library_id):
 
 @endpoint('/get-note-resource/{scheme}/{digest}/{library_id=None}')
 def get_note_resource(ctx, rd, scheme, digest, library_id):
-    '''
+    """
     Get the data for a resource in a field note, such as an image.
-    '''
+    """
     db = get_db(ctx, rd, library_id)
     if db is None:
         raise HTTPNotFound(f'Library {library_id} not found')
@@ -463,18 +521,21 @@ def get_note_resource(ctx, rd, scheme, digest, library_id):
     if not d:
         raise HTTPNotFound(f'Notes resource {scheme}:{digest} not found')
     name = d['name']
-    rd.outheaders['Content-Type'] = guess_type(name)[0] or 'application/octet-stream'
-    rd.outheaders['Content-Disposition'] = '''inline; filename="{}"; filename*=utf-8''{}'''.format(
-        fname_for_content_disposition(name), fname_for_content_disposition(name, as_encoded_unicode=True))
+    content_type = guess_type(name)[0] or 'application/octet-stream'
+    rd.outheaders['Content-Type'] = content_type
+    add_sandbox_headers(rd, content_type)
+    rd.outheaders['Content-Disposition'] = (
+        f'''inline; filename="{fname_for_content_disposition(name)}"; filename*=utf-8''{fname_for_content_disposition(name, as_encoded_unicode=True)}'''
+    )
     rd.outheaders['Last-Modified'] = http_date(d['mtime'])
     return d['data']
 
 
 @endpoint('/set-note/{field}/{item_id}/{library_id=None}', needs_db_write=True, methods={'POST'}, types={'item_id': int})
 def set_note(ctx, rd, field, item_id, library_id):
-    '''
+    """
     Set the note for a field  as HTML + text + resources.
-    '''
+    """
     db = get_db(ctx, rd, library_id)
     if db is None:
         raise HTTPNotFound(f'Library {library_id} not found')
@@ -500,6 +561,7 @@ def set_note(ctx, rd, field, item_id, library_id):
                 fname = img['filename']
             else:
                 m = res_pat.search(img['data'])
+                assert m is not None
                 scheme, digest = m.group(1), m.group(2)
                 resources.append(f'{scheme}:{digest}')
         except Exception as err:
@@ -512,9 +574,100 @@ def set_note(ctx, rd, field, item_id, library_id):
         db_replacements[key] = f'{RESOURCE_URL_SCHEME}://{scheme}/{digest}'
     db_html = srv_html = html
     if db_replacements:
-        db_html = re.sub('|'.join(map(re.escape, db_replacements)), lambda m: db_replacements[m.group()], html)
+        db_html = re.sub(r'|'.join(map(re.escape, db_replacements)), lambda m: db_replacements[m.group()], html)
     if srv_replacements:
-        srv_html = re.sub('|'.join(map(re.escape, srv_replacements)), lambda m: srv_replacements[m.group()], html)
+        srv_html = re.sub(r'|'.join(map(re.escape, srv_replacements)), lambda m: srv_replacements[m.group()], html)
     db.set_notes_for(field, item_id, db_html, searchable_text, resources)
     rd.outheaders['Content-Type'] = 'text/html; charset=UTF-8'
     return srv_html
+
+
+def sanitize_content_disposition(x: str) -> str:
+    return re.sub(r'[^a-zA-Z0-9./-]', '-', x)
+
+
+def data_file(rd, fname, path, stat_result):
+    cd = sanitize_content_disposition(rd.query.get('content_disposition', 'attachment'))
+    # Content-Type for this response is guessed from the filename when the
+    # response is sent, see http_response.py
+    add_sandbox_headers(rd, guess_type(fname)[0] or '')
+    rd.outheaders['Content-Disposition'] = (
+        f'''{cd}; filename="{fname_for_content_disposition(fname)}"; filename*=utf-8''{fname_for_content_disposition(fname, as_encoded_unicode=True)}'''
+    )
+    return rd.filesystem_file_with_custom_etag(share_open(path, 'rb'), stat_result.st_dev, stat_result.st_ino, stat_result.st_size, stat_result.st_mtime)
+
+
+def get_db_for_data_file(ctx, rd, book_id, library_id):
+    db = get_db(ctx, rd, library_id)
+    if db is None:
+        raise HTTPNotFound(f'Library {library_id} not found')
+    if not ctx.has_id(rd, db, book_id):
+        raise BookNotFound(book_id, db)
+    return db
+
+
+@endpoint('/data-files/get/{book_id}/{relpath}/{library_id=None}', types={'book_id': int})
+def get_data_file(ctx, rd, book_id, relpath, library_id):
+    db = get_db_for_data_file(ctx, rd, book_id, library_id)
+    for ef in db.list_extra_files(book_id, pattern=DATA_FILE_PATTERN):
+        if ef.relpath == relpath:
+            return data_file(rd, relpath.rpartition('/')[2], ef.file_path, ef.stat_result)
+    raise HTTPNotFound(f'No data file {relpath} in book {book_id} in library {library_id}')
+
+
+def strerr(e: Exception):
+    # Don't leak the filepath in the error response
+    if isinstance(e, OSError):
+        return e.strerror or str(e)
+    return str(e)
+
+
+@endpoint(
+    '/data-files/upload/{book_id}/{library_id=None}',
+    needs_db_write=True,
+    methods={'POST'},
+    types={'book_id': int},
+    postprocess=json,
+)
+def upload_data_files(ctx, rd, book_id, library_id):
+    db = get_db_for_data_file(ctx, rd, book_id, library_id)
+    files = {}
+    try:
+        recvd = load_json_file(rd.request_body_file)
+        for x in recvd:
+            data = from_base64_bytes(x['data_url'].split(',', 1)[-1])
+            relpath = f'{DATA_DIR_NAME}/{x["name"]}'
+            files[relpath] = ReadOnlyFileBuffer(data, x['name'])
+    except Exception as err:
+        raise HTTPBadRequest(f'Invalid query: {err}')
+    err = ''
+    try:
+        db.add_extra_files(book_id, files)
+    except Exception as e:
+        err = strerr(e)
+    data_files = db.list_extra_files(book_id, use_cache=False, pattern=DATA_FILE_PATTERN)
+    return {'error': err, 'data_files': {e.relpath: encode_stat_result(e.stat_result) for e in data_files}}
+
+
+@endpoint(
+    '/data-files/remove/{book_id}/{library_id=None}',
+    needs_db_write=True,
+    methods={'POST'},
+    types={'book_id': int},
+    postprocess=json,
+)
+def remove_data_files(ctx, rd, book_id, library_id):
+    db = get_db_for_data_file(ctx, rd, book_id, library_id)
+    try:
+        relpaths = load_json_file(rd.request_body_file)
+        if not isinstance(relpaths, list):
+            raise Exception('files to remove must be a list')
+    except Exception as err:
+        raise HTTPBadRequest(f'Invalid query: {err}')
+
+    errors = db.remove_extra_files(book_id, relpaths, permanent=True)
+    data_files = db.list_extra_files(book_id, use_cache=False, pattern=DATA_FILE_PATTERN)
+    ans = {'data_files': {e.relpath: encode_stat_result(e.stat_result) for e in data_files}}
+    if errors:
+        ans['errors'] = {k: strerr(v) for k, v in errors.items() if v is not None}
+    return ans

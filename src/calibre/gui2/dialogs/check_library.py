@@ -1,9 +1,5 @@
 #!/usr/bin/env python
-
-
-__copyright__ = '2008, Kovid Goyal kovid@kovidgoyal.net'
-__docformat__ = 'restructuredtext en'
-__license__   = 'GPL v3'
+# License: GPLv3 Copyright: 2008, Kovid Goyal kovid@kovidgoyal.net
 
 import os
 import weakref
@@ -38,19 +34,19 @@ from calibre import as_unicode, prints
 from calibre.gui2 import open_local_file
 from calibre.gui2.dialogs.confirm_delete import confirm
 from calibre.library.check_library import CHECKS, CheckLibrary
+from calibre.utils.localization import _
 from calibre.utils.recycle_bin import delete_file, delete_tree
 
 
 class DBCheck(QDialog):  # {{{
-
     finished_vacuum = pyqtSignal()
+    was_rejected = False
 
     def __init__(self, parent, db):
         QDialog.__init__(self, parent)
         self.vacuum_started = False
         self.finished_vacuum.connect(self.accept, type=Qt.ConnectionType.QueuedConnection)
         self.error = None
-        self.rejected = False
 
         s = QStackedLayout(self)
         s.setContentsMargins(0, 0, 0, 0)
@@ -64,19 +60,27 @@ class DBCheck(QDialog):  # {{{
         la.setWordWrap(True)
         l.addWidget(la)
 
+        self.annots = a = QCheckBox(_('Also rebuild the annotations search index'))
+        l.addWidget(a)
+        la = QLabel('<p style="margin-left: 20px; font-style: italic">' + _('This can be a slow operation, depending on the number of annotations you have.'))
+        la.setWordWrap(True)
+        l.addWidget(la)
+
         self.fts = f = QCheckBox(_('Also compact the Full text search database'))
         l.addWidget(f)
-        la = QLabel('<p style="margin-left: 20px; font-style: italic">' + _(
-            'This can be a very slow and memory intensive operation,'
-            ' depending on the size of the Full text database.'))
+        la = QLabel(
+            '<p style="margin-left: 20px; font-style: italic">'
+            + _('This can be a very slow and memory intensive operation, depending on the size of the Full text database.')
+        )
         la.setWordWrap(True)
         l.addWidget(la)
 
         self.notes = n = QCheckBox(_('Also compact the notes database'))
         l.addWidget(n)
-        la = QLabel('<p style="margin-left: 20px; font-style: italic">' + _(
-            'This can be a very slow and memory intensive operation,'
-            ' depending on the size of the notes database.'))
+        la = QLabel(
+            '<p style="margin-left: 20px; font-style: italic">'
+            + _('This can be a very slow and memory intensive operation, depending on the size of the notes database.')
+        )
         la.setWordWrap(True)
         l.addWidget(la)
 
@@ -88,8 +92,7 @@ class DBCheck(QDialog):  # {{{
         self.setWindowTitle(_('Check the database file'))
 
         l = QVBoxLayout(two)
-        la = QLabel(_('Vacuuming database to improve performance.') + ' ' +
-                         _('This will take a while, please wait...'))
+        la = QLabel(_('Vacuuming database to improve performance.') + ' ' + _('This will take a while, please wait...'))
         la.setWordWrap(True)
         l.addWidget(la)
         pb = QProgressBar(self)
@@ -102,43 +105,51 @@ class DBCheck(QDialog):  # {{{
 
     def start(self):
         self.setWindowTitle(_('Vacuuming...'))
-        self.layout().setCurrentIndex(1)
+        sl = self.layout()
+        assert isinstance(sl, QStackedLayout)
+        sl.setCurrentIndex(1)
         QApplication.setOverrideCursor(QCursor(Qt.CursorShape.WaitCursor))
         self.vacuum_started = True
         db = self.db()
-        t = self.thread = Thread(target=self.vacuum, args=(db, self.fts.isChecked(), self.notes.isChecked()), daemon=True, name='VacuumDB')
+        self._worker = t = Thread(
+            target=self.vacuum,
+            args=(db, self.fts.isChecked(), self.notes.isChecked(), self.annots.isChecked()),
+            daemon=True,
+            name='VacuumDB',
+        )
         t.start()
 
-    def vacuum(self, db, include_fts_db, include_notes_db):
+    def vacuum(self, db, include_fts_db, include_notes_db, rebuild_annotations_fts):
         try:
-            db.vacuum(include_fts_db, include_notes_db)
+            db.vacuum(include_fts_db, include_notes_db, rebuild_annotations_fts)
         except Exception as e:
             import traceback
+
             self.error = (as_unicode(e), traceback.format_exc())
         self.finished_vacuum.emit()
 
     def reject(self):
-        self.rejected = True
+        self.was_rejected = True
         if self.vacuum_started:
             return
         return QDialog.reject(self)
 
-    def closeEvent(self, ev):
+    def closeEvent(self, a0):
         if self.vacuum_started:
-            ev.ignore()
+            a0.ignore()
             return
-        return super().closeEvent(ev)
+        return super().closeEvent(a0)
 
     def break_cycles(self):
         if self.vacuum_started:
             QApplication.restoreOverrideCursor()
-        self.thread = None
+        self._worker = None
+
 
 # }}}
 
 
 class TextWithButtonWidget(QWidget):
-
     button_icon = None
 
     def __init__(self, library_path, text, item_path):
@@ -169,7 +180,6 @@ class TextWithButtonWidget(QWidget):
 
 
 class CheckLibraryDialog(QDialog):
-
     is_deletable = 1
     is_fixable = 2
 
@@ -192,7 +202,8 @@ class CheckLibraryDialog(QDialog):
         self._layout.setContentsMargins(0, 0, 0, 0)
         self.left.setLayout(self._layout)
         self.helpw.setReadOnly(True)
-        self.helpw.setText(_('''\
+        self.helpw.setText(
+            _('''\
         <h1>Help</h1>
 
         <p>calibre stores the list of your books and their metadata in a
@@ -252,7 +263,8 @@ class CheckLibraryDialog(QDialog):
         button will tell calibre that the formats are really gone. Use this if
         you are not going to restore the formats from a backup.</p>
 
-        '''))
+        ''')
+        )
 
         self.log = QTreeWidget(self)
         self.log.itemChanged.connect(self.item_changed)
@@ -300,22 +312,23 @@ class CheckLibraryDialog(QDialog):
         h.addWidget(ln)
         self.name_ignores = QLineEdit()
         self.name_ignores.setText(db.new_api.pref('check_library_ignore_names', ''))
-        tt_ext = ('<br><br>' +
-                 _('Note: ignoring folders or files inside a book folder can lead to data loss. Ignored '
-                   "folders and files will be lost if you change the book's title or author(s)."))
-        self.name_ignores.setToolTip('<p>' +
-            _('Enter comma-separated standard shell file name wildcards, such as synctoy*.dat. '
-              'Used in library, author, and book folders') +
-            tt_ext + '</p>')
+        tt_ext = '<br><br>' + _(
+            'Note: ignoring folders or files inside a book folder can lead to data loss. Ignored '
+            "folders and files will be lost if you change the book's title or author(s)."
+        )
+        self.name_ignores.setToolTip(
+            '<p>'
+            + _('Enter comma-separated standard shell file name wildcards, such as synctoy*.dat. Used in library, author, and book folders')
+            + tt_ext
+            + '</p>'
+        )
         ln.setBuddy(self.name_ignores)
         h.addWidget(self.name_ignores)
         le = QLabel(_('Extensions to ignore:'))
         h.addWidget(le)
         self.ext_ignores = QLineEdit()
         self.ext_ignores.setText(db.new_api.pref('check_library_ignore_extensions', ''))
-        self.ext_ignores.setToolTip('<p>' +
-            _('Enter comma-separated extensions without a leading dot. Used only in book folders') +
-            tt_ext + '</p>')
+        self.ext_ignores.setToolTip('<p>' + _('Enter comma-separated extensions without a leading dot. Used only in book folders') + tt_ext + '</p>')
         le.setBuddy(self.ext_ignores)
         h.addWidget(self.ext_ignores)
         self._layout.addLayout(h)
@@ -344,8 +357,7 @@ class CheckLibraryDialog(QDialog):
 
     def run_the_check(self):
         checker = CheckLibrary(self.db.library_path, self.db)
-        checker.scan_library(self.box_to_list(str(self.name_ignores.text())),
-                             self.box_to_list(str(self.ext_ignores.text())))
+        checker.scan_library(self.box_to_list(str(self.name_ignores.text())), self.box_to_list(str(self.ext_ignores.text())))
 
         plaintext = []
 
@@ -421,30 +433,29 @@ class CheckLibraryDialog(QDialog):
             self.log.blockSignals(True)
             if col:
                 node.setCheckState(col, to_what)
-            for i in range(0, node.childCount()):
+            for i in range(node.childCount()):
                 node.child(i).setCheckState(2, to_what)
             self.log.blockSignals(False)
 
         def is_child_delete_checked(node):
             checked = False
             all_checked = True
-            for i in range(0, node.childCount()):
+            for i in range(node.childCount()):
                 c = node.child(i).checkState(2)
                 checked = checked or c == Qt.CheckState.Checked
                 all_checked = all_checked and c == Qt.CheckState.Checked
-            return (checked, all_checked)
+            return checked, all_checked
 
         def any_child_delete_checked():
             for parent in self.top_level_items.values():
-                (c, _) = is_child_delete_checked(parent)
+                c, _ = is_child_delete_checked(parent)
                 if c:
                     return True
             return False
 
         def any_fix_checked():
             for parent in self.top_level_items.values():
-                if (parent.data(1, Qt.ItemDataRole.UserRole) == self.is_fixable and
-                        parent.checkState(1) == Qt.CheckState.Checked):
+                if parent.data(1, Qt.ItemDataRole.UserRole) == self.is_fixable and parent.checkState(1) == Qt.CheckState.Checked:
                     return True
             return False
 
@@ -464,7 +475,7 @@ class CheckLibraryDialog(QDialog):
         else:
             for parent in self.top_level_items.values():
                 if parent.data(2, Qt.ItemDataRole.UserRole) == self.is_deletable:
-                    (child_chkd, all_chkd) = is_child_delete_checked(parent)
+                    child_chkd, all_chkd = is_child_delete_checked(parent)
                     if all_chkd and child_chkd:
                         check_state = Qt.CheckState.Checked
                     elif child_chkd:
@@ -484,27 +495,25 @@ class CheckLibraryDialog(QDialog):
 
     def mark_for_fix(self):
         for it in self.top_level_items.values():
-            if (it.flags() & Qt.ItemFlag.ItemIsUserCheckable and
-                    it.data(1, Qt.ItemDataRole.UserRole) == self.is_fixable and
-                    it.childCount() > 0):
+            if it.flags() & Qt.ItemFlag.ItemIsUserCheckable and it.data(1, Qt.ItemDataRole.UserRole) == self.is_fixable and it.childCount() > 0:
                 it.setCheckState(1, Qt.CheckState.Checked)
 
     def mark_for_delete(self):
         for it in self.all_items:
-            if (it.flags() & Qt.ItemFlag.ItemIsUserCheckable and
-                    it.data(2, Qt.ItemDataRole.UserRole) == self.is_deletable):
+            if it.flags() & Qt.ItemFlag.ItemIsUserCheckable and it.data(2, Qt.ItemDataRole.UserRole) == self.is_deletable:
                 it.setCheckState(2, Qt.CheckState.Checked)
 
     def delete_marked(self):
-        if not confirm('<p>'+_('The marked files and folders will be '
-               '<b>permanently deleted</b>. Are you sure?') + '</p>', 'check_library_editor_delete', self):
+        if not confirm(
+            '<p>' + _('The marked files and folders will be <b>permanently deleted</b>. Are you sure?') + '</p>',
+            'check_library_editor_delete',
+            self,
+        ):
             return
 
         # Sort the paths in reverse length order so that we can be sure that
         # if an item is in another item, the sub-item will be deleted first.
-        items = sorted(self.all_items,
-                       key=lambda x: len(x.text(1)),
-                       reverse=True)
+        items = sorted(self.all_items, key=lambda x: len(x.text(1)), reverse=True)
         for it in items:
             if it.checkState(2) == Qt.CheckState.Checked:
                 try:
@@ -513,29 +522,27 @@ class CheckLibraryDialog(QDialog):
                         delete_tree(p)
                     else:
                         delete_file(p)
-                except:
-                    prints('failed to delete',
-                            os.path.join(self.db.library_path,
-                                str(it.text(2))))
+                except Exception:
+                    prints('failed to delete', os.path.join(self.db.library_path, str(it.text(2))))
         self.run_the_check()
 
     def fix_missing_formats(self):
         tl = self.top_level_items['missing_formats']
         child_count = tl.childCount()
-        for i in range(0, child_count):
+        for i in range(child_count):
             item = tl.child(i)
             id = int(item.data(0, Qt.ItemDataRole.UserRole))
             all = self.db.formats(id, index_is_id=True, verify_formats=False)
             all = {f.strip() for f in all.split(',')} if all else set()
             valid = self.db.formats(id, index_is_id=True, verify_formats=True)
             valid = {f.strip() for f in valid.split(',')} if valid else set()
-            for fmt in all-valid:
+            for fmt in all - valid:
                 self.db.remove_format(id, fmt, index_is_id=True, db_only=True)
 
     def fix_missing_covers(self):
         tl = self.top_level_items['missing_covers']
         child_count = tl.childCount()
-        for i in range(0, child_count):
+        for i in range(child_count):
             item = tl.child(i)
             id = int(item.data(0, Qt.ItemDataRole.UserRole))
             self.db.set_has_cover(id, False)
@@ -543,10 +550,40 @@ class CheckLibraryDialog(QDialog):
     def fix_extra_covers(self):
         tl = self.top_level_items['extra_covers']
         child_count = tl.childCount()
-        for i in range(0, child_count):
+        for i in range(child_count):
             item = tl.child(i)
             id = int(item.data(0, Qt.ItemDataRole.UserRole))
             self.db.set_has_cover(id, True)
+
+    def fix_malformed_paths(self):
+        tl = self.top_level_items['malformed_paths']
+        child_count = tl.childCount()
+        for i in range(child_count):
+            item = tl.child(i)
+            id_ = int(item.data(0, Qt.ItemDataRole.UserRole))
+            lib_path = item.text(2)
+            db_path = self.db.path(id_, index_is_id=True)
+            path_ath_lib = os.path.join(self.db.library_path, lib_path.split(os.sep)[0])
+            path_ath_db = os.path.join(self.db.library_path, db_path.split(os.sep)[0])
+            path_lib = os.path.join(self.db.library_path, lib_path)
+            path_db = os.path.join(self.db.library_path, db_path)
+            os.makedirs(path_ath_db, exist_ok=True)
+            os.rename(path_lib, path_db)
+            dirpath, dirnames, filenames = next(os.walk(path_ath_lib))
+            if not dirnames and not filenames:
+                os.rmdir(path_ath_lib)
+
+    def fix_malformed_formats(self):
+        tl = self.top_level_items['malformed_formats']
+        child_count = tl.childCount()
+        for i in range(child_count):
+            item = tl.child(i)
+            id_ = int(item.data(0, Qt.ItemDataRole.UserRole))
+            lib_path = item.text(2)
+            book_path = os.path.join(*lib_path.split(os.sep)[:-1])
+            ext = os.path.splitext(lib_path)[1].strip('.')
+            filename = self.db.new_api.format_files(id_)[ext.upper()] + '.' + ext.lower()
+            os.rename(os.path.join(self.db.library_path, lib_path), os.path.join(self.db.library_path, book_path, filename))
 
     def fix_items(self):
         for check in CHECKS:
@@ -560,12 +597,16 @@ class CheckLibraryDialog(QDialog):
         self.run_the_check()
 
     def copy_to_clipboard(self):
-        QApplication.clipboard().setText(self.text_results)
+        cb = QApplication.clipboard()
+        assert cb is not None
+        cb.setText(self.text_results)
 
 
 if __name__ == '__main__':
     from calibre.gui2 import Application
+
     app = Application([])
     from calibre.library import db as dbconn
+
     d = DBCheck(None, dbconn())
     d.exec()

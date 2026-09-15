@@ -1,8 +1,5 @@
 #!/usr/bin/env python
-
-
-__license__ = 'GPL v3'
-__copyright__ = '2013, Kovid Goyal <kovid at kovidgoyal.net>'
+# License: GPLv3 Copyright: 2013, Kovid Goyal <kovid at kovidgoyal.net>
 
 from contextlib import closing
 from functools import partial
@@ -14,7 +11,6 @@ DEBUG, INFO, WARN, ERROR, CRITICAL = range(5)
 
 
 class BaseError:
-
     HELP = ''
     INDIVIDUAL_FIX = ''
     level = ERROR
@@ -36,9 +32,10 @@ def worker(func, args):
     try:
         result = func(*args)
         tb = None
-    except:
+    except Exception:
         result = None
         import traceback
+
         tb = traceback.format_exc()
     return result, tb
 
@@ -50,6 +47,6 @@ def run_checkers(func, args_list):
     with closing(pool):
         for result, tb in pool.map(partial(worker, func), args_list):
             if tb is not None:
-                raise Exception('Failed to run worker: \n%s' % tb)
+                raise Exception(f'Failed to run worker: \n{tb}')
             ans.extend(result)
     return ans

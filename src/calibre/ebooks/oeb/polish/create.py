@@ -1,8 +1,5 @@
 #!/usr/bin/env python
-
-
-__license__ = 'GPL v3'
-__copyright__ = '2013, Kovid Goyal <kovid at kovidgoyal.net>'
+# License: GPLv3 Copyright: 2013, Kovid Goyal <kovid at kovidgoyal.net>
 
 import os
 import sys
@@ -19,7 +16,7 @@ from calibre.ebooks.oeb.polish.pretty import pretty_html_tree, pretty_xml_tree
 from calibre.ebooks.oeb.polish.toc import TOC, create_ncx
 from calibre.ebooks.oeb.polish.utils import guess_type
 from calibre.ptempfile import TemporaryDirectory
-from calibre.utils.localization import lang_as_iso639_1
+from calibre.utils.localization import _, lang_as_iso639_1
 from calibre.utils.logging import DevNull
 from calibre.utils.resources import get_path as P
 from calibre.utils.zipfile import ZIP_STORED, ZipFile
@@ -34,13 +31,13 @@ def create_toc(mi, opf, html_name, lang):
         uuid = u.text
     toc = TOC()
     toc.add(_('Start'), html_name)
-    return create_ncx(toc, lambda x:x, mi.title, lang, uuid)
+    return create_ncx(toc, lambda x: x, mi.title, lang, uuid)
 
 
 def create_book(mi, path, fmt='epub', opf_name='metadata.opf', html_name='start.xhtml', toc_name='toc.ncx'):
-    ''' Create an empty book in the specified format at the specified location. '''
+    """Create an empty book in the specified format at the specified location."""
     if fmt not in valid_empty_formats:
-        raise ValueError('Cannot create empty book in the %s format' % fmt)
+        raise ValueError(f'Cannot create empty book in the {fmt} format')
     if fmt == 'txt':
         with open(path, 'wb') as f:
             if not mi.is_null('title'):
@@ -55,6 +52,7 @@ def create_book(mi, path, fmt='epub', opf_name='metadata.opf', html_name='start.
         from calibre.ebooks.conversion.plumber import Plumber
         from calibre.ebooks.docx.writer.container import DOCX
         from calibre.utils.logging import default_log
+
         p = Plumber('a.docx', 'b.docx', default_log)
         p.setup_options()
         # Use the word default of one inch page margins
@@ -72,33 +70,34 @@ def create_book(mi, path, fmt='epub', opf_name='metadata.opf', html_name='start.
     lang = lang_as_iso639_1(lang) or lang
 
     opfns = OPF_NAMESPACES['opf']
-    m = opf.makeelement('{%s}manifest' % opfns)
+    m = opf.makeelement(f'{{{opfns}}}manifest')
     opf.insert(1, m)
-    i = m.makeelement('{%s}item' % opfns, href=html_name, id='start')
+    i = m.makeelement(f'{{{opfns}}}item', href=html_name, id='start')
     i.set('media-type', guess_type('a.xhtml'))
     m.append(i)
-    i = m.makeelement('{%s}item' % opfns, href=toc_name, id='ncx')
+    i = m.makeelement(f'{{{opfns}}}item', href=toc_name, id='ncx')
     i.set('media-type', guess_type(toc_name))
     m.append(i)
-    s = opf.makeelement('{%s}spine' % opfns, toc="ncx")
+    s = opf.makeelement(f'{{{opfns}}}spine', toc='ncx')
     opf.insert(2, s)
-    i = s.makeelement('{%s}itemref' % opfns, idref='start')
+    i = s.makeelement(f'{{{opfns}}}itemref', idref='start')
     s.append(i)
-    CONTAINER = '''\
+    CONTAINER = f'''\
 <?xml version="1.0"?>
 <container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
    <rootfiles>
-      <rootfile full-path="{}" media-type="application/oebps-package+xml"/>
+      <rootfile full-path="{prepare_string_for_xml(opf_name, True)}" media-type="application/oebps-package+xml"/>
    </rootfiles>
 </container>
-    '''.format(prepare_string_for_xml(opf_name, True)).encode('utf-8')
-    HTML = P('templates/new_book.html', data=True).decode('utf-8').replace(
-        '_LANGUAGE_', prepare_string_for_xml(lang, True)
-    ).replace(
-        '_TITLE_', prepare_string_for_xml(mi.title)
-    ).replace(
-        '_AUTHORS_', prepare_string_for_xml(authors_to_string(mi.authors))
-    ).encode('utf-8')
+    '''.encode()
+    HTML = (
+        P('templates/new_book.html', data=True)
+        .decode('utf-8')
+        .replace('_LANGUAGE_', prepare_string_for_xml(lang, True))
+        .replace('_TITLE_', prepare_string_for_xml(mi.title))
+        .replace('_AUTHORS_', prepare_string_for_xml(authors_to_string(mi.authors)))
+        .encode('utf-8')
+    )
     h = parse(HTML)
     pretty_html_tree(None, h)
     HTML = serialize(h, 'text/html')
@@ -124,6 +123,7 @@ def create_book(mi, path, fmt='epub', opf_name='metadata.opf', html_name='start.
 
 if __name__ == '__main__':
     from calibre.ebooks.metadata.book.base import Metadata
+
     mi = Metadata('Test book', authors=('Kovid Goyal',))
     path = sys.argv[-1]
     ext = path.rpartition('.')[-1].lower()

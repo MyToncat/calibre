@@ -1,14 +1,14 @@
-'''
-SVG rasterization transform.
-'''
+# License: GPLv3 Copyright: 2008, Marshall T. Vandegrift <llasram@gmail.com>
 
-__license__   = 'GPL v3'
-__copyright__ = '2008, Marshall T. Vandegrift <llasram@gmail.com>'
+"""
+SVG rasterization transform.
+"""
 
 import os
 import re
 from base64 import standard_b64encode
 from functools import lru_cache
+from urllib.parse import urldefrag
 
 from lxml import etree
 from qt.core import QBuffer, QByteArray, QColor, QImage, QIODevice, QPainter, QSvgRenderer, Qt
@@ -17,18 +17,20 @@ from calibre import guess_type
 from calibre.ebooks.oeb.base import PNG_MIME, SVG_MIME, XHTML, XLINK, urlnormalize, xml2str, xpath
 from calibre.ebooks.oeb.stylizer import Stylizer
 from calibre.utils.imghdr import what
-from polyglot.urllib import urldefrag
 
 IMAGE_TAGS = {XHTML('img'), XHTML('object')}
 KEEP_ATTRS = {'class', 'style', 'width', 'height', 'align'}
 
+
 def test_svg():  # {{{
-    TEST_PNG_DATA_URI='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAMAAABEpIrGAAAAGXRFWHRTb2Z0d2FyZQBBZG9iZSBJbWFnZVJlYWR5ccllPAAAAWJQTFRFAAAAAAAAAAAAAAAAAAAAAQEAAgIBAwIBBgQCBwUCCAYDCggECwkEDgsFDwwFEA0GHRcKHxkLIBkLIxwMJR0NJx8OKCAOKCAPKSAPMScSPTAWQTQXQzUYSjsaSjsbSzsbUD8dUUAdVEMeWkggW0ggW0ghW0khXUohYk4ja1Umb1gocVoocVopclspc1spdV0qd18reF8riW0xjXEzl3g2mns3nn04nn45n345oIA6ooE7o4I7pII7pIM7pYQ7p4U8qYY8rYo+s45Bxp1Hx55Hy6FJy6JJzaRJz6RKz6RLz6VL0qdL1KpM1apM1qtN16xN2KxN2K1O2a1O2q1O265P3K9P3bBQ3rBP37FP37FQ37JQ4rNR47VR5LVR7LxV7bxV7r1V7r5W8L9W8MBW8b9V8b9W8cBW8cBX8sBW8sBX8sFW8sFX88BX88FW88FX88FY88JX88JY9MFX9MJX9MJY9MNYSw0rOAAAAAR0Uk5T2+rr8giKtGMAAAFDSURBVDjLhdNFUwNBEIbhJWkkuLu7u5PgHtwWl0CGnW34aJLl/3OgUlRlGfKepqafmstUW1Yw8E9By6IMWVn/z7OsQOpYNrE0H4lEwuFwZHmyLnUb+AUzIiLMItDgrWIfKH3mnz4RA6PX/8Im8xuEgVfxxG33g+rVi9OT46OdPQ0kDgv8gCg3FMrLphkNyCD9BYiIqEErraP5ZrDGDrw2MoIhsPACGUH5g2gVqzWDKQ/gETKCZmHwbo4ZbHhJ1q1kBMMJCKbJCCof35V+qjCDOUCrMTKCFkc8vU5GENpW8NwmMxhVccYsGUHVvWKOFhlBySJicV6u7+7s6Ozq6anxgT44Lwy4jlKK4br96WDl09GA/gA4zp7gLh2MM3MS+EgCGl+iD9JB4cDZzbV9ZV/atn1+frvfaPhuX4HMq0cZsjKt/zfXXmDab9zjGwAAAABJRU5ErkJggg=='
+    TEST_PNG_DATA_URI = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAMAAABEpIrGAAAAGXRFWHRTb2Z0d2FyZQBBZG9iZSBJbWFnZVJlYWR5ccllPAAAAWJQTFRFAAAAAAAAAAAAAAAAAAAAAQEAAgIBAwIBBgQCBwUCCAYDCggECwkEDgsFDwwFEA0GHRcKHxkLIBkLIxwMJR0NJx8OKCAOKCAPKSAPMScSPTAWQTQXQzUYSjsaSjsbSzsbUD8dUUAdVEMeWkggW0ggW0ghW0khXUohYk4ja1Umb1gocVoocVopclspc1spdV0qd18reF8riW0xjXEzl3g2mns3nn04nn45n345oIA6ooE7o4I7pII7pIM7pYQ7p4U8qYY8rYo+s45Bxp1Hx55Hy6FJy6JJzaRJz6RKz6RLz6VL0qdL1KpM1apM1qtN16xN2KxN2K1O2a1O2q1O265P3K9P3bBQ3rBP37FP37FQ37JQ4rNR47VR5LVR7LxV7bxV7r1V7r5W8L9W8MBW8b9V8b9W8cBW8cBX8sBW8sBX8sFW8sFX88BX88FW88FX88FY88JX88JY9MFX9MJX9MJY9MNYSw0rOAAAAAR0Uk5T2+rr8giKtGMAAAFDSURBVDjLhdNFUwNBEIbhJWkkuLu7u5PgHtwWl0CGnW34aJLl/3OgUlRlGfKepqafmstUW1Yw8E9By6IMWVn/z7OsQOpYNrE0H4lEwuFwZHmyLnUb+AUzIiLMItDgrWIfKH3mnz4RA6PX/8Im8xuEgVfxxG33g+rVi9OT46OdPQ0kDgv8gCg3FMrLphkNyCD9BYiIqEErraP5ZrDGDrw2MoIhsPACGUH5g2gVqzWDKQ/gETKCZmHwbo4ZbHhJ1q1kBMMJCKbJCCof35V+qjCDOUCrMTKCFkc8vU5GENpW8NwmMxhVccYsGUHVvWKOFhlBySJicV6u7+7s6Ozq6anxgT44Lwy4jlKK4br96WDl09GA/gA4zp7gLh2MM3MS+EgCGl+iD9JB4cDZzbV9ZV/atn1+frvfaPhuX4HMq0cZsjKt/zfXXmDab9zjGwAAAABJRU5ErkJggg=='  # noqa
     return f'''
     <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
     <path d="M4.5 11H3v4h4v-1.5H4.5V11zM3 7h1.5V4.5H7V3H3v4zm10.5 6.5H11V15h4v-4h-1.5v2.5zM11 3v1.5h2.5V7H15V3h-4z"/>
     <image width="32" height="32" x="32" y="32" xlink:href="{TEST_PNG_DATA_URI}"/>
     </svg>'''.encode()
+
+
 # }}}
 
 
@@ -49,7 +51,7 @@ def rasterize_svg(data=None, sizes=(), width=0, height=0, print=None, fmt='PNG',
     if print is not None:
         print(f'Rasterizing SVG to {size.width()} x {size.height()}')
     image = QImage(size, QImage.Format.Format_ARGB32_Premultiplied)
-    image.fill(QColor("white").rgb())
+    image.fill(QColor('white').rgb())
     painter = QPainter(image)
     svg.render(painter)
     painter.end()
@@ -68,11 +70,11 @@ def data_url(mime_type: str, data: bytes) -> str:
 
 
 class SVGRasterizer:
-
     def __init__(self, base_css='', save_svg_originals=False):
         self.base_css = base_css
         self.save_svg_originals = save_svg_originals
         from calibre.gui2 import must_use_qt
+
         must_use_qt()
 
     @classmethod
@@ -102,20 +104,18 @@ class SVGRasterizer:
 
         if view_box is not None:
             try:
-                box = [float(x) for x in filter(None, re.split('[, ]', view_box))]
-                sizes = [box[2]-box[0], box[3] - box[1]]
-            except (TypeError, ValueError, IndexError):
-                logger.warn('SVG image has invalid viewBox="%s", ignoring the viewBox' % view_box)
+                box = [float(x) for x in filter(None, re.split(r'[, ]', view_box))]
+                sizes = [box[2] - box[0], box[3] - box[1]]
+            except TypeError, ValueError, IndexError:
+                logger.warn(f'SVG image has invalid viewBox="{view_box}", ignoring the viewBox')
             else:
-                for image in elem.xpath('descendant::*[local-name()="image" and '
-                        '@height and contains(@height, "%")]'):
+                for image in elem.xpath('descendant::*[local-name()="image" and @height and contains(@height, "%")]'):
                     logger.info('Found SVG image height in %, trying to convert...')
                     try:
-                        h = float(image.get('height').replace('%', ''))/100.
-                        image.set('height', str(h*sizes[1]))
-                    except:
-                        logger.exception('Failed to convert percentage height:',
-                                image.get('height'))
+                        h = float(image.get('height').replace('%', '')) / 100.0
+                        image.set('height', str(h * sizes[1]))
+                    except Exception:
+                        logger.exception('Failed to convert percentage height:', image.get('height'))
 
         return rasterize_svg(xml2str(elem, with_tail=False), sizes=sizes, width=width, height=height, print=logger.info, fmt=format)
 
@@ -142,7 +142,7 @@ class SVGRasterizer:
             ext = what(None, data)
             if not ext:
                 continue
-            mt = guess_type('file.'+ext)[0]
+            mt = guess_type('file.' + ext)[0]
             if not mt or not mt.startswith('image/'):
                 continue
             elem.set(ha, data_url(mt, data))
@@ -152,8 +152,7 @@ class SVGRasterizer:
     def stylizer(self, item):
         ans = self.stylizer_cache.get(item, None)
         if ans is None:
-            ans = self.stylizer_cache[item] = Stylizer(item.data, item.href, self.oeb, self.opts,
-                    self.profile, base_css=self.base_css)
+            ans = self.stylizer_cache[item] = Stylizer(item.data, item.href, self.oeb, self.opts, self.profile, base_css=self.base_css)
         return ans
 
     def rasterize_spine(self):
@@ -169,7 +168,7 @@ class SVGRasterizer:
             if image and image.media_type == SVG_MIME:
                 style = self.stylizer(item).style(elem)
                 self.rasterize_external(elem, style, item, image)
-        for elem in xpath(html, '//h:object[@type="%s" and @data]' % SVG_MIME):
+        for elem in xpath(html, f'//h:object[@type="{SVG_MIME}" and @data]'):
             data = urlnormalize(elem.attrib['data'])
             image = hrefs.get(item.abshref(data), None)
             if image and image.media_type == SVG_MIME:
@@ -216,10 +215,9 @@ class SVGRasterizer:
             href = self.images[key]
         else:
             logger = self.oeb.logger
-            logger.info('Rasterizing %r to %dx%d'
-                        % (svgitem.href, size.width(), size.height()))
+            logger.info(f'Rasterizing {svgitem.href!r} to {size.width()}x{size.height()}')
             image = QImage(size, QImage.Format.Format_ARGB32_Premultiplied)
-            image.fill(QColor("white").rgb())
+            image.fill(QColor('white').rgb())
             painter = QPainter(image)
             svg.render(painter)
             painter.end()

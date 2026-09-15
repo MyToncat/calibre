@@ -1,7 +1,6 @@
 #!/usr/bin/env python
 # License: GPLv3 Copyright: 2018, Kovid Goyal <kovid at kovidgoyal.net>
 
-
 from lxml import etree
 
 from calibre.ebooks.metadata.opf3 import (
@@ -25,11 +24,11 @@ from calibre.ebooks.metadata.opf3 import (
     set_user_metadata3,
 )
 from calibre.ebooks.metadata.utils import parse_opf, pretty_print_opf
-from polyglot.builtins import itervalues
 
 
 class Data:
-    pass
+    prefixes: object
+    refines: object
 
 
 def upgrade_identifiers(root, data):
@@ -91,11 +90,11 @@ def upgrade_authors(root, data):
                 aid = ensure_id(elem)
                 metadata = elem.getparent()
                 if role:
-                    m = metadata.makeelement(OPF('meta'), attrib={'refines':'#'+aid, 'property':'role', 'scheme':'marc:relators'})
+                    m = metadata.makeelement(OPF('meta'), attrib={'refines': '#' + aid, 'property': 'role', 'scheme': 'marc:relators'})
                     m.text = role
                     metadata.append(m)
                 if sort:
-                    m = metadata.makeelement(OPF('meta'), attrib={'refines':'#'+aid, 'property':'file-as'})
+                    m = metadata.makeelement(OPF('meta'), attrib={'refines': '#' + aid, 'property': 'file-as'})
                     m.text = sort
                     metadata.append(m)
 
@@ -153,7 +152,7 @@ def upgrade_series(root, data):
 def upgrade_custom(root, data):
     m = read_user_metadata2(root, remove_tags=True)
     if m:
-        for fm in itervalues(m):
+        for fm in m.values():
             encode_is_multiple(fm)
         set_user_metadata3(root, data.prefixes, data.refines, m)
 
@@ -223,6 +222,7 @@ def upgrade_metadata(root):
 
 if __name__ == '__main__':
     import sys
+
     root = parse_opf(open(sys.argv[-1], 'rb'))
     upgrade_metadata(root)
     print(etree.tostring(root))

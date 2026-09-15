@@ -3,10 +3,11 @@
 from __python__ import bound_methods, hash_literals
 
 from elementmaker import E
+from gettext import gettext as _
 
 from book_list.globals import get_session_data
+from dom import svgicon
 from dom import unique_id
-from gettext import gettext as _
 from read_book.gestures import (
     allowed_actions_for_flow_mode_drag, allowed_actions_for_flow_mode_flick,
     allowed_actions_for_paged_mode_swipe, allowed_actions_for_tap,
@@ -18,8 +19,10 @@ from read_book.touch import GESTURE, GESTURE_NAMES
 
 CONTAINER = unique_id('touch-settings')
 
+
 def restore_defaults():
     apply_settings_to_ui({})
+
 
 def get_container():
     return document.getElementById(CONTAINER)
@@ -31,7 +34,7 @@ def apply_settings_to_ui(overrides):
         group_name = group.dataset.group
         in_flow_mode = group_name.indexOf('flow') >= 0
         for select in group.querySelectorAll('select'):
-            allowed_actions = v'[]'
+            allowed_actions = []
             for option in select.querySelectorAll('option'):
                 allowed_actions.push(option.value)
             gesture_type = select.name
@@ -41,7 +44,8 @@ def apply_settings_to_ui(overrides):
             if not current_action or allowed_actions.indexOf(current_action) < 0:
                 current_action = 'none'
             select.value = current_action
-            select.dispatchEvent(new Event('change', {'view': window,'bubbles': True}))
+            select.dispatchEvent(new Event('change', {'view': window, 'bubbles': True}))
+
 
 def get_overrides_from_ui():
     ans = {}
@@ -78,11 +82,11 @@ def create_touch_panel(container, apply_func, cancel_func):
     def on_select_change(ev):
         select = ev.target
         ad = action_descriptions[select.value]
-        span = select.parentNode.querySelector('span')
+        span = select.parentNode.parentNode.querySelector('.help-text')
         span.textContent = ad.long
 
     def make_setting(gesture_type, allowed_actions):
-        ans = E.div(style='margin-top: 1ex')
+        ans = E.div(style='margin-top: 1ex; display: flex; flex-direction: column')
         title = GESTURE_NAMES()[gesture_type]
         sid = unique_id(gesture_type)
         ans.appendChild(E.h4(E.label(title, 'for'=sid)))
@@ -91,7 +95,11 @@ def create_touch_panel(container, apply_func, cancel_func):
             ad = action_descriptions[action]
             select.appendChild(E.option(ad.short, value=action))
         select.addEventListener('change', on_select_change)
-        ans.appendChild(E.div(select, '\xa0', E.span(style='font-size: smaller; font-style: italic')))
+        c = E.div(select, E.span(svgicon('angle-down')), data_component='select')
+        ans.appendChild(E.div(
+            c, E.span(class_='help-text', style='font-size: smaller; font-style: italic'),
+            style='display: flex; flex-wrap: wrap; gap: 1ex; align-items: center'
+        ))
         on_select_change({'target': select})
         return ans
 
@@ -106,7 +114,7 @@ def create_touch_panel(container, apply_func, cancel_func):
     c.appendChild(make_setting(GESTURE.forward_zone_tap, aat))
     c.appendChild(make_setting(GESTURE.back_zone_tap, aat))
     c.appendChild(make_setting(GESTURE.long_tap, aat))
-    container.appendChild(E.hr())
+    container.appendChild(E.hr(style='margin-top:1ex; margin-bottom: 1ex'))
 
     container.appendChild(E.h2(_('Two finger gestures')))
     c = E.div('data-group'='two_finger')
@@ -115,8 +123,7 @@ def create_touch_panel(container, apply_func, cancel_func):
     c.appendChild(make_setting(GESTURE.two_finger_tap, aat))
     c.appendChild(make_setting(GESTURE.pinch_in, aat))
     c.appendChild(make_setting(GESTURE.pinch_out, aat))
-    container.appendChild(E.hr())
-
+    container.appendChild(E.hr(style='margin-top:1ex; margin-bottom: 1ex'))
 
     container.appendChild(E.h2(_('Swiping')))
     container.appendChild(E.div(_(
@@ -136,7 +143,7 @@ def create_touch_panel(container, apply_func, cancel_func):
     c.appendChild(make_setting(GESTURE.swipe_inline_backward_hold, aap))
     c.appendChild(make_setting(GESTURE.swipe_block_forward_hold, aap))
     c.appendChild(make_setting(GESTURE.swipe_block_backward_hold, aap))
-    container.appendChild(E.hr())
+    container.appendChild(E.hr(style='margin-top:1ex; margin-bottom: 1ex'))
     container.appendChild(E.h3(_('Swiping in flow mode'), style='padding-top: 1ex'))
     c = E.div('data-group'='flow_swipe')
     container.appendChild(c)
@@ -153,7 +160,7 @@ def create_touch_panel(container, apply_func, cancel_func):
     c.appendChild(make_setting(GESTURE.swipe_block_backward_in_progress, aaf))
     c.appendChild(make_setting(GESTURE.swipe_block_forward_in_progress, aaf))
 
-    container.appendChild(E.hr())
+    container.appendChild(E.hr(style='margin-top:1ex; margin-bottom: 1ex'))
     container.appendChild(create_button_box(restore_defaults, apply_func, cancel_func))
     apply_settings_to_ui(overrides)
 

@@ -18,9 +18,9 @@ What formats does calibre support conversion to/from?
 calibre supports the conversion of many input formats to many output formats.
 It can convert every input format in the following list, to every output format.
 
-*Input Formats:* AZW, AZW3, AZW4, CBZ, CBR, CB7, CBC, CHM, DJVU, DOCX, EPUB, FB2, FBZ, HTML, HTMLZ, LIT, LRF, MOBI, ODT, PDF, PRC, PDB, PML, RB, RTF, SNB, TCR, TXT, TXTZ
+*Input Formats:* AZW, AZW3, AZW4, CBZ, CBR, CB7, CBC, CHM, DJVU, DOCX, EPUB, FB2, FBZ, HTML, HTMLZ, KEPUB, LIT, LRF, MOBI, ODT, PDF, PRC, PDB, PML, RB, RTF, SNB, TCR, TXT, TXTZ
 
-*Output Formats:* AZW3, EPUB, DOCX, FB2, HTMLZ, OEB, LIT, LRF, MOBI, PDB, PMLZ, RB, PDF, RTF, SNB, TCR, TXT, TXTZ, ZIP
+*Output Formats:* AZW3, EPUB, DOCX, FB2, HTMLZ, KEPUB, OEB, LIT, LRF, MOBI, PDB, PMLZ, RB, PDF, RTF, SNB, TCR, TXT, TXTZ, ZIP
 
 .. note ::
 
@@ -34,7 +34,7 @@ It can convert every input format in the following list, to every output format.
 
 What are the best source formats to convert?
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-In order of decreasing preference: LIT, MOBI, AZW, EPUB, AZW3, FB2, FBZ, DOCX, HTML, PRC, ODT, RTF, PDB, TXT, PDF
+In order of decreasing preference: LIT, MOBI, AZW, EPUB, KEPUB, AZW3, FB2, FBZ, DOCX, HTML, PRC, ODT, RTF, PDB, TXT, PDF
 
 I converted a PDF file, but the result has various problems?
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -61,7 +61,7 @@ In the MOBI format, the situation is a little confused. This is because the MOBI
 
 Now it might well seem to you that the MOBI book has two identical ToCs. Remember that one is semantically a content ToC and the other is a metadata ToC, even though both might have exactly the same entries and look the same. One can be accessed directly from the Kindle's menus, the other cannot.
 
-When converting to MOBI, calibre detects the *metadata ToC* in the input document and generates an end-of-file ToC in the output MOBI file. You can turn this off by an option in the MOBI Output settings. You can also tell calibre whether to put it at the start or the end of the book via an option in the MOBI Output settings. Remember this ToC is semantically a *metadata ToC*, in any format other than MOBI it *cannot not be part of the text*. The fact that it is part of the text in MOBI is an accident caused by the limitations of MOBI. If you want a ToC at a particular location in your document text, create one by hand. So we strongly recommend that you leave the default as it is, i.e. with the metadata ToC at the end of the book. Also note that if you disable the generation of the end-of-file ToC the resulting MOBI file may not function correctly on a Kindle, since the Kindle's use the metadata ToC for many things, including the Page Flip feature.
+When converting to MOBI, calibre detects the *metadata ToC* in the input document and generates an end-of-file ToC in the output MOBI file. You can turn this off by an option in the MOBI Output settings. You can also tell calibre whether to put it at the start or the end of the book via an option in the MOBI Output settings. Remember this ToC is semantically a *metadata ToC*, in any format other than MOBI it *cannot be part of the text*. The fact that it is part of the text in MOBI is an accident caused by the limitations of MOBI. If you want a ToC at a particular location in your document text, create one by hand. So we strongly recommend that you leave the default as it is, i.e. with the metadata ToC at the end of the book. Also note that if you disable the generation of the end-of-file ToC the resulting MOBI file may not function correctly on a Kindle, since the Kindle's use the metadata ToC for many things, including the Page Flip feature.
 
 If you have a hand edited ToC in the input document, you can use the ToC detection options in calibre to automatically generate the metadata ToC from it. See the conversion section of the User Manual for more details on how to use these options.
 
@@ -116,7 +116,7 @@ output a valid EPUB. calibre tries hard to ensure that EPUBs it produces actuall
 work as intended on a wide variety of devices, a goal that is incompatible with
 producing valid EPUBs, and one that is far more important to the vast majority
 of its users. If you need a tool that always produces valid EPUBs, calibre is not
-for you. This means, that if you want to send a calibre produced EPUB to an
+for you. This means that if you want to send a calibre produced EPUB to an
 online store that uses an EPUB validity checker, you have to make sure that the
 EPUB is valid yourself, calibre will not do it for you -- in other words you
 must feed calibre valid XHTML + CSS as the input documents.
@@ -178,8 +178,8 @@ Follow these steps to find the problem:
       no longer allows third party software to connect to their devices using a
       USB cable. Instead use a wireless connection, via the calibre Content
       server.
-    * If you are connecting a Kindle Fire or other Android device, read the note
-      under :ref:`android_usb`.
+    * If you are connecting a 2024 Kindle or newer or an Android device, and are on macOS or Linux,
+      read the note under :ref:`android_usb`.
     * On macOS if you get permission errors when connecting a device to calibre, you can
       fix that by looking under :guilabel:`System Preferences > Security and
       Privacy > Privacy > Files and Folders`.
@@ -247,7 +247,7 @@ You will see a list of books in Safari, tap on any book and you will be given
 the option to either download it, or read it in the browser itself. If you
 choose to download it, Safari will ask you if you want to open it with iBooks.
 
-Many reading apps support browsing the calibre library directly via its `OPDS <httpd://opds.io/>`__ support.
+Many reading apps support browsing the calibre library directly via its `OPDS <https://opds.io/>`__ support.
 In such apps you can go to the online catalog screen and add the IP address of
 the calibre server to browse and download books from your calibre library
 within the app.
@@ -280,8 +280,8 @@ utility, etc.
 .. note:: With newer Android devices, you might have to jump through a few hoops
     to get the connection working, as Google really does not want you to be
     independent of its cloud. First, unlock the screen before plugging in the
-    USB cable. When you plugin in the USB cable you will get a popup
-    notification. Make sure it says some thing like "Transferring Media files"
+    USB cable. When you plug in the USB cable you will get a popup
+    notification. Make sure it says something like "Transferring Media files"
     or "MTP (Media Transfer mode)". If it does not, tap the notification, and
     change the mode to Media Transfer (MTP).  You may need to restart calibre
     at this point in order for your device to be recognized.  Finally, you
@@ -317,7 +317,7 @@ You can now browse your book collection and download books from calibre
 to your device to open with whatever e-book reading software you have on your
 Android device.
 
-Many reading apps support browsing the calibre library directly via its `OPDS <httpd://opds.io/>`__ support.
+Many reading apps support browsing the calibre library directly via its `OPDS <https://opds.io/>`__ support.
 In such apps you can go to the online catalog screen and add the IP address of
 the calibre server to browse and download books from your calibre library
 within the app.
@@ -457,8 +457,24 @@ customer support and complain loudly about this bug. Maybe Amazon will listen.
 
 .. note::
 
-   If the workaround is not working for you make sure you Kindle firmware
+   If the workaround is not working for you make sure your Kindle firmware
    is at least version 5.12.5, released in April 2020.
+
+Covers for books sent to my Kindle ColorSoft and newer do not show up in the book list?
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Amazon deliberately broke this functionality in their ColorSoft and newer
+devices in order to discourage you from reading non Amazon books on their
+devices. See `this forum thread
+<https://www.mobileread.com/forums/showthread.php?t=364350>`__ for details. The
+only known workaround is to send the books as "Personal documents" to the
+Kindle which will fix the covers not showing up but break other features such
+as Whispersync and the books will show up under "Personal documents" not
+"Books" on the device. To enable this in calibre go to
+:guilabel:`Preferences->Output options->MOBI output` and enable the check box
+that says :guilabel:`Enable sharing of book content`. This will cause all
+future books sent to the Kindle by calibre to be marked as personal documents.
+
 
 The covers for my MOBI files have stopped showing up in Kindle for PC/Kindle for Android/iPad etc.
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -676,7 +692,7 @@ where calibre stores the metadata like title/author/rating/tags etc. for *every*
 book in your calibre library. The list of books that calibre displays is created by
 reading the contents of this metadata.db file.
 
-There can be two reasons why calibre is showing a empty list of books:
+There can be two reasons why calibre is showing an empty list of books:
 
   * Your calibre library folder changed its location. This can happen if it was
     on an external disk and the drive letter for that disk changed. Or if you
@@ -714,7 +730,9 @@ DropBox or rsync instead of a networked drive. If you are
 using a file-syncing tool it is **essential** that you make sure that both
 calibre and the file syncing tool do not try to access the calibre library at the
 same time. In other words, **do not** run the file syncing tool and calibre at
-the same time.
+the same time. calibre libraries should never be shared between users and you
+should never open a calibre library you get from an untrusted source, as that
+is a security risk.
 
 Even with these tools there is danger of data corruption/loss, so only do this
 if you are willing to live with that risk. In particular, be aware that
@@ -796,6 +814,10 @@ There can be several causes for this:
       probably just appeared off screen. You can gather all windows onto the
       current screen using one of the techniques described `here <https://www.wikihow.com/Bring-an-Off-Screen-Window-Back-on-Windows>`__.
 
+    * Some software has been known to interfere with calibre, try rebooting in
+      Safe mode and see if it works. A known culprit is the `Sunshine
+      <https://github.com/LizardByte/Sunshine>`__ screen sharing software.
+
     * If you get an error about calibre not being able to open a file because it is in use by another program, do the following:
 
        * Uninstall calibre
@@ -806,7 +828,7 @@ There can be several causes for this:
        * Start calibre
        * From now on you should be able to start calibre normally.
 
-    * If you get an error about a Python function terminating unexpectedly after upgrading calibre, first uninstall calibre, then delete the folders (if they exists)
+    * If you get an error about a Python function terminating unexpectedly after upgrading calibre, first uninstall calibre, then delete the folders (if they exist)
       :file:`C:\\Program Files\\Calibre` and :file:`C:\\Program Files\\Calibre2`. Now re-install and you should be fine.
     * If you get an error in the :guilabel:`Welcome wizard` on an initial run of calibre, try choosing a folder like :file:`C:\\library` as the calibre library (calibre sometimes
       has trouble with library locations if the path contains non-English characters, or only numbers, etc.)
@@ -875,25 +897,13 @@ see which one is causing the issue. Basically, stop a program, run calibre,
 check for crashes. If they still happen, stop another program and repeat.
 
 
-The calibre E-book viewer and Edit book tools do not work on Windows?
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-These two programs use hardware acceleration as they embed a version of the
-Chrome browser to render HTML. If they do not work it will be because of
-incompatibility with your system's GPU (graphics) drivers. Try updating these
-first, and reboot. If that does not fix it, you can set the
-``QTWEBENGINE_CHROMIUM_FLAGS`` environment variable to the value
-``--disable-gpu`` to turn off hardware acceleration. See
-`this page <https://doc.qt.io/qt-6/qtwebengine-debugging.html>`_ for details.
-
-
 Using the viewer or doing any conversions results in a permission denied error on Windows
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Something on your computer is preventing calibre from accessing its own
 temporary files. Most likely the permissions on your :file:`Temp` folder are incorrect.
-Go to the folder file:`C:\\Users\\USERNAME\\AppData\\Local` in Windows
-Explorer and then right click on the file:`Temp` folder, select :guilabel:`Properties` and go to
+Go to the folder :file:`C:\\Users\\USERNAME\\AppData\\Local` in Windows
+Explorer and then right click on the :file:`Temp` folder, select :guilabel:`Properties` and go to
 the :guilabel:`Security` tab. Make sure that your user account has full control for this
 folder.
 
@@ -916,10 +926,10 @@ calibre is not starting/crashing on macOS?
 
 One common cause of failures on macOS is the use of accessibility technologies
 that are incompatible with the graphics toolkit calibre uses.  Try turning off
-VoiceOver if you have it on. Also go to System Preferences->System->Universal
-Access and turn off the setting for enabling access for assistive devices in
+VoiceOver if you have it on. Also go to System Preferences->Accessibility
+and turn off the setting for enabling access for assistive devices in
 all the tabs. Another cause can be some third party apps that modify system
-behavior, such as Smart Scroll.
+behavior, such as Smart Scroll and Default Folder X.
 
 You can obtain debug output about why calibre is not starting by running `Console.app`. Debug output will
 be printed to it. If the debug output contains a line that looks like::
@@ -927,7 +937,7 @@ be printed to it. If the debug output contains a line that looks like::
     Qt: internal: -108: Error ATSUMeasureTextImage text/qfontengine_mac.mm
 
 then the problem is probably a corrupted font cache. You can clear the cache by following these
-`instructions <https://www.macworld.com/article/1139383/fontcacheclear.html>`_. If that doesn't
+`instructions <https://typefaceapp.com/help/troubleshooting/macos-font-cache>`_. If that doesn't
 solve it, look for a corrupted font file on your system, in ~/Library/Fonts or the like. An easy way to
 check for corrupted fonts in macOS is to start the "Font Book" application, select all fonts and then in the File
 menu, choose "Validate fonts".
@@ -938,9 +948,8 @@ I get only a black or white screen when running the calibre E-book viewer?
 This will be because of an incompatibility between Qt WebEngine, which the
 viewer uses to render and the GPU drivers on your system. First try
 upgrading the GPU drivers. If that does not help, you can try turning off
-hardware acceleration in Qt WebEngine by setting the environment variable
-``QTWEBENGINE_CHROMIUM_FLAGS`` to the value ``--disable-gpu``.
-See :ref:`customize_env_vars` for how to change environment variables.
+hardware acceleration in Qt WebEngine via Preferences->Tweaks->Control GPU
+usage in Qt WebEngine.
 
 
 I downloaded the installer, but it is not working?
@@ -950,6 +959,7 @@ Downloading from the Internet can sometimes result in a corrupted download. If t
 
     * Try temporarily disabling your antivirus program (Microsoft Security Essentials, or Kaspersky or Norton or McAfee or whatever). This is most likely the culprit if the upgrade process is hanging in the middle.
     * Similarly, if the installer is failing/rolling back and you have Microsoft PowerToys running, quit it.
+    * If you have installed to a non-standard location, try running the installer as Administrator
     * Try rebooting your computer and running a registry cleaner like `Wise registry cleaner <https://www.wisecleaner.com>`_.
     * Try a clean install. That is, uninstall calibre, delete :file:`C:\\Program Files\\Calibre2` (or wherever you previously chose to install calibre). Then re-install calibre. Note that uninstalling does not touch your books or settings.
     * Try downloading the installer with an alternate browser. For example if you are using Microsoft Edge, try using Firefox or Chrome instead.
@@ -1063,6 +1073,14 @@ For many reasons:
 
   * There are third party automatic updaters for calibre made by calibre users
     in the `calibre forum <https://www.mobileread.com/forums/forumdisplay.php?f=238>`_.
+
+  * There is a third party plugin called :guilabel:`calibre Auto-update` that you can
+    install via :guilabel:`Preferences->Plugins->Get new plugins` for a more
+    streamlined update experience.
+
+  * Additionally, some third-party updaters such as Norton or Avast may update
+    software behind the user's back. If you find calibre has updated unexpectedly,
+    check for the presence of one.
 
 How is calibre licensed?
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

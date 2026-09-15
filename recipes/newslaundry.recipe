@@ -14,16 +14,14 @@ class newslaundry(BasicNewsRecipe):
     encoding = 'utf-8'
     no_stylesheets = True
     remove_javascript = True
-    oldest_article = 7 # days
+    oldest_article = 7  # days
     resolve_internal_links = True
 
     ignore_duplicate_articles = {'url'}
 
     # keep_only_tags = [classes('headline subheadline authorWithTimeStamp story-card')]
 
-    feeds = [
-        ('Articles', 'https://www.newslaundry.com/stories.rss?time-period=last-7-days')
-    ]
+    feeds = [('Articles', 'https://www.newslaundry.com/stories.rss?time-period=last-7-days')]
 
     # def preprocess_html(self, soup):
     #     if h1 := soup.find(**classes('headline')):
@@ -34,5 +32,5 @@ class newslaundry(BasicNewsRecipe):
 
     def print_version(self, url):
         if 'hindi.newslaundry' in url:
-            self.abort_article('Skipping hindi article') # remove this line if you want hindi articles.
+            self.abort_article('Skipping hindi article')  # remove this line if you want hindi articles.
         return url

@@ -1,8 +1,5 @@
 #!/usr/bin/env python
-
-
-__license__ = 'GPL v3'
-__copyright__ = '2014, Kovid Goyal <kovid at kovidgoyal.net>'
+# License: GPLv3 Copyright: 2014, Kovid Goyal <kovid at kovidgoyal.net>
 
 from collections import namedtuple
 
@@ -21,7 +18,7 @@ def parse_lang_code(raw):
     parts = raw.replace('_', '-').split('-')
     lc = canonicalize_lang(parts[0])
     if lc is None:
-        raise ValueError('Invalid language code: %r' % raw)
+        raise ValueError(f'Invalid language code: {raw!r}')
     cc = None
     for sc in ['Cyrl', 'Latn']:
         if sc in parts:

@@ -18,9 +18,7 @@ def get_paths():
     bypy = os.path.join(d(base), 'bypy')
     bypy = os.environ.get('BYPY_LOCATION', bypy)
     if not os.path.isdir(bypy):
-        raise SystemExit(
-            'Cannot find the bypy code. Set the environment variable BYPY_LOCATION to point to it'
-        )
+        raise SystemExit('Cannot find the bypy code. Set the environment variable BYPY_LOCATION to point to it')
     return base, bypy
 
 
@@ -57,7 +55,7 @@ def get_dist(base, which, bitness):
 
 def shutdown_allowed(which, bitness):
     # The ARM64 VM is extremely flakey often booting up to a non-functional
-    # state so dont shut it down as it seems to be more stable once bootup is
+    # state so don't shut it down as it seems to be more stable once boot-up is
     # done.
     return bitness != 'arm64'
 
@@ -116,54 +114,31 @@ def build_dep(args):
 
 
 class BuildInstaller(Command):
-
     OS = ''
     BITNESS = ''
 
     def add_options(self, parser):
-        parser.add_option(
-            '--dont-shutdown',
-            default=False,
-            action='store_true',
-            help='Do not shutdown the VM after building'
-        )
-        parser.add_option(
-            '--dont-sign',
-            default=False,
-            action='store_true',
-            help='Do not sign the installers'
-        )
-        parser.add_option(
-            '--dont-notarize',
-            default=False,
-            action='store_true',
-            help='Do not notarize the installers'
-        )
-        parser.add_option(
-            '--compression-level',
-            default='9',
-            choices=list('123456789'),
-            help='Do not notarize the installers'
-        )
-        parser.add_option(
-            '--dont-strip',
-            default=False,
-            action='store_true',
-            help='Do not strip the binaries'
-        )
+        parser.add_option('--dont-shutdown', default=False, action='store_true', help='Do not shutdown the VM after building')
+        parser.add_option('--dont-sign', default=False, action='store_true', help='Do not sign the installers')
+        parser.add_option('--dont-notarize', default=False, action='store_true', help='Do not notarize the installers')
+        parser.add_option('--compression-level', default='9', choices=list('123456789'), help='Do not notarize the installers')
+        parser.add_option('--dont-strip', default=False, action='store_true', help='Do not strip the binaries')
 
     def run(self, opts):
         build_single(
-            self.OS, self.BITNESS, not opts.dont_shutdown,
-            not opts.dont_sign, not opts.dont_notarize,
-            compression_level=opts.compression_level, dont_strip=opts.dont_strip
+            self.OS,
+            self.BITNESS,
+            not opts.dont_shutdown,
+            not opts.dont_sign,
+            not opts.dont_notarize,
+            compression_level=opts.compression_level,
+            dont_strip=opts.dont_strip,
         )
 
 
 class BuildInstallers(BuildInstaller):
-
     OS = ''
-    ALL_ARCHES = '64',
+    ALL_ARCHES = ('64',)
 
     def run(self, opts):
         for bitness in self.ALL_ARCHES:
@@ -203,7 +178,6 @@ class Win(BuildInstallers):
 
 
 class BuildDep(Command):
-
     description = (
         'Build a calibre dependency. For example, build_dep windows expat.'
         ' Without arguments builds all deps for specified platform. Use linux-arm64 for Linux ARM.'
@@ -221,7 +195,6 @@ class BuildDep(Command):
 
 
 class ExportPackages(Command):
-
     description = 'Export built deps to a server for CI testing'
 
     def run(self, opts):
@@ -235,13 +208,22 @@ class ExportPackages(Command):
 
 
 class ExtDev(Command):
-
     description = 'Develop a single native extension conveniently'
+
+    def add_options(self, parser):
+        parser.add_option(
+            '-L',
+            '--libdir',
+            default=[],
+            action='append',
+            help='Path to directory from which to load extra libraries, relative to pkg directory of cross compile target.',
+        )
 
     def run(self, opts):
         which, ext = opts.cli_args[:2]
         cmd = opts.cli_args[2:] or ['calibre-debug', '--test-build']
         if which == 'windows':
+            os.environ['CROSS_LIBDIRS'] = os.pathsep.join(f'bypy/b/windows/64/pkg/{x}' for x in opts.libdir)
             cp = subprocess.run([sys.executable, 'setup.py', 'build', '--cross-compile-extensions=windows', f'--only={ext}'])
             if cp.returncode != 0:
                 raise SystemExit(cp.returncode)
@@ -250,44 +232,65 @@ class ExtDev(Command):
             path = '/cygdrive/c/Program Files/Calibre2/app/bin/{}.pyd'
             bin_dir = '/cygdrive/c/Program Files/Calibre2'
         elif which == 'macos':
+            os.environ['CROSS_LIBDIRS'] = os.pathsep.join(f'bypy/b/macos/pkg/{x}' for x in opts.libdir)
             ext_dir = build_only(which, '', ext)
             src = os.path.join(ext_dir, f'{ext}.so')
             print(
-                "\n\n\x1b[33;1mWARNING: This does not work on macOS, unless you use un-signed builds with ",
+                '\n\n\x1b[33;1mWARNING: This does not work on macOS, unless you use un-signed builds with ',
                 ' ./update-on-ox develop\x1b[m',
-                file=sys.stderr, end='\n\n\n')
+                file=sys.stderr,
+                end='\n\n\n',
+            )
             host = 'ox'
             path = '/Applications/calibre.app/Contents/Frameworks/plugins/{}.so'
             bin_dir = '/Applications/calibre.app/Contents/MacOS'
         else:
             raise SystemExit(f'Unknown OS {which}')
         control_path = os.path.expanduser('~/.ssh/extdev-master-%C')
-        if subprocess.Popen([
-            'ssh', '-o', 'ControlMaster=auto', '-o', 'ControlPath=' + control_path, '-o', 'ControlPersist=yes', host,
-            'echo', 'ssh master running'
-        ]).wait() != 0:
+        if (
+            subprocess.Popen([
+                'ssh',
+                '-o',
+                'ControlMaster=auto',
+                '-o',
+                'ControlPath=' + control_path,
+                '-o',
+                'ControlPersist=yes',
+                host,
+                'echo',
+                'ssh master running',
+            ]).wait()
+            != 0
+        ):
             raise SystemExit(1)
         try:
             path = path.format(ext)
-            subprocess.check_call(['ssh', '-S', control_path, host, 'chmod', '+wx', f'"{path}"'])
+            subprocess.call(['ssh', '-S', control_path, host, 'chmod', '+wx', f'"{path}"'])
             with open(src, 'rb') as f:
                 p = subprocess.Popen(['ssh', '-S', control_path, host, f'cat - > "{path}"'], stdin=subprocess.PIPE)
                 p.communicate(f.read())
             if p.wait() != 0:
                 raise SystemExit(1)
-            subprocess.check_call(['ssh', '-S', control_path, host, './update-calibre'])
+            subprocess.check_call(['ssh', '-S', control_path, host, 'bin/update-calibre'])
             enc = json.dumps(cmd)
             if not isinstance(enc, bytes):
                 enc = enc.encode('utf-8')
             enc = binascii.hexlify(enc).decode('ascii')
-            wcmd = ['"{}"'.format(os.path.join(bin_dir, 'calibre-debug')), '-c', '"'
+            wcmd = [
+                '"{}"'.format(os.path.join(bin_dir, 'calibre-debug')),
+                '-c',
+                (
+                    '"'
                     'import sys, json, binascii, os, subprocess; cmd = json.loads(binascii.unhexlify(sys.argv[-1]));'
                     'env = os.environ.copy();'
                     '''env[str('CALIBRE_DEVELOP_FROM')] = str(os.path.abspath('calibre-src/src'));'''
                     'from calibre.debug import get_debug_executable; exe_dir = os.path.dirname(get_debug_executable()[0]);'
                     'cmd[0] = os.path.join(exe_dir, cmd[0]); ret = subprocess.Popen(cmd, env=env).wait();'
                     'sys.stdout.flush(); sys.stderr.flush(); sys.exit(ret)'
-                    '"', enc]
+                    '"'
+                ),
+                enc,
+            ]
             ret = subprocess.Popen(['ssh', '-S', control_path, host] + wcmd).wait()
             if ret != 0:
                 raise SystemExit('The test command "{}" failed with exit code: {}'.format(' '.join(cmd), ret))

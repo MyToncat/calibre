@@ -134,10 +134,12 @@ Read aloud
 
 The viewer can read book text aloud. To use it you can simply click the
 :guilabel:`Read aloud` button in the viewer controls to start reading book text
-aloud. The word being currently read is highlighted. Speech is synthesized from
-the text using your operating system services for text-to-speech. You can
-change the voice being used by clicking the gear icon in the bar that is
-displayed while :guilabel:`Read aloud` is active.
+aloud. The word or sentence being currently read is highlighted. Speech is
+synthesized from the text using either the `Piper
+<https://github.com/rhasspy/piper>`__ neural text-to-speech engine or your
+operating system services for text-to-speech. You can change the backend and
+the voice being used by clicking the gear icon in the bar that is displayed
+while :guilabel:`Read aloud` is active.
 
 You can also read aloud highlighted passages by adding the :guilabel:`Read aloud` button to
 the selection bar in the viewer preferences under :guilabel:`Selection
@@ -147,17 +149,7 @@ behavior`.
 .. note:: Support for text-to-speech in browsers is very incomplete and
    bug-ridden so how well :guilabel:`Read aloud` will work in the in-browser
    viewer is dependent on how well the underlying browser supports
-   text-to-speech. In particular, highlighting of current word does not work,
-   and changing speed or voice will cause reading to start again from the
-   beginning.
-
-.. note:: On Linux, :guilabel:`Read aloud` requires `Speech Dispatcher
-   <https://freebsoft.org/speechd>`_ to be installed and working.
-
-.. note:: On Windows, not all installed voices may be visible to the SAPI
-   sub-system that is used for text-to-speech. There are `instructions to
-   make all voices visible
-   <https://www.mobileread.com/forums/showpost.php?p=4084051&postcount=108>`_.
+   text-to-speech.
 
 Searching the text
 --------------------------
@@ -238,6 +230,22 @@ You can look up the meaning of words in the current book by double clicking
 or long tapping the word you want to lookup and then clicking the lookup button
 that looks like a library.
 
+Custom lookup sources
+^^^^^^^^^^^^^^^^^^^^^^
+
+In addition to the built-in sources (such as Google dictionary and Wordnik), you
+can add your own. In the :guilabel:`Lookup` panel, click :guilabel:`Add sources`,
+then :guilabel:`Add`, and enter a name and a URL template. The placeholder
+:code:`{word}` in the URL is replaced with the selected word at lookup time. You
+can also restrict a source to specific book languages so that it is only used
+when the book matches.
+
+This can be used to point the viewer at any web dictionary that exposes a
+per-word URL, or at a local HTTP server running on your machine. For example, a
+URL template like :code:`http://127.0.0.1:8000/{word}` will query a dictionary
+server running locally, which is useful for offline reading or for using
+dictionaries that are not available online.
+
 
 Copying text and images
 -------------------------
@@ -275,20 +283,20 @@ The viewer has extensive keyboard shortcuts, like the rest of calibre. They can
 be customised in the viewer :guilabel:`Preferences`. The default shortcuts are listed below:
 
 
-.. list-table:: Keyboard shortcuts for the calibre viewer
+.. list-table:: Keyboard shortcuts for the calibre E-book viewer
     :widths: 10 100
     :header-rows: 1
 
     * - Keyboard shortcut
       - Action
     * - :kbd:`Home, Ctrl+ArrowUp, Ctrl+ArrowLeft`
-      - Scroll to the start of the current file in a multi file book
+      - Scroll to the start of the current file in a multi-file book
     * - :kbd:`Ctrl+Home`
       - Scroll to the beginning of the book
     * - :kbd:`Ctrl+End`
       - Scroll to the end of the book
     * - :kbd:`End, Ctrl+ArrowDown, Ctrl+ArrowRight`
-      - Scroll to the end of the current file in a multi file book
+      - Scroll to the end of the current file in a multi-file book
     * - :kbd:`ArrowUp`
       - Scroll backwards, smoothly in flow mode and by screen fulls in paged mode
     * - :kbd:`ArrowDown`
@@ -419,10 +427,10 @@ viewer preferences to force the viewer to break up lines of text in
     code, pre { white-space: pre-wrap }
 
 
-Designing your book to work well with the calibre viewer
-------------------------------------------------------------
+Designing your book to work well with the calibre E-book viewer
+-----------------------------------------------------------------
 
-The calibre viewer will set the ``is-calibre-viewer`` class on the root
+The calibre E-book viewer will set the ``is-calibre-viewer`` class on the root
 element. So you can write CSS rules that apply only for it. Additionally,
 the viewer will set the following classes on the ``body`` element:
 
@@ -443,7 +451,7 @@ the viewer will set the following classes on the ``body`` element:
 
 Finally, you can use the calibre color scheme colors via `CSS variables
 <https://developer.mozilla.org/en-US/docs/Web/CSS/Using_CSS_custom_properties>`_.
-The calibre viewer defines the following variables:
+The calibre E-book viewer defines the following variables:
 ``--calibre-viewer-background-color``, ``--calibre-viewer-foreground-color``
 and optionally ``--calibre-viewer-link-color`` in color themes that define
 a link color.

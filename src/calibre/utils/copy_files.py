@@ -6,8 +6,8 @@ import shutil
 import stat
 import time
 from collections import defaultdict
+from collections.abc import Callable
 from contextlib import suppress
-from typing import Callable, Dict, List, Set, Tuple, Union
 
 from calibre.constants import filesystem_encoding, iswindows
 from calibre.utils.filenames import make_long_path_useable, samefile, windows_hardlink
@@ -16,14 +16,14 @@ if iswindows:
     from calibre_extensions import winutil
 
 WINDOWS_SLEEP_FOR_RETRY_TIME = 2  # seconds
-WindowsFileId = Tuple[int, int, int]
+WindowsFileId = tuple[int, int, int]
+
 
 class UnixFileCopier:
-
     def __init__(self, delete_all=False, allow_move=False):
         self.delete_all = delete_all
         self.allow_move = allow_move
-        self.copy_map: Dict[str, str] = {}
+        self.copy_map: dict[str, str] = {}
 
     def register(self, path: str, dest: str) -> None:
         self.copy_map[path] = dest
@@ -51,6 +51,7 @@ class UnixFileCopier:
                 except OSError:
                     # Failure to copy metadata is not critical
                     import traceback
+
                     traceback.print_exc()
                 continue
             with suppress(shutil.SameFileError):
@@ -73,37 +74,38 @@ def windows_lock_path_and_callback(path: str, f: Callable) -> None:
 
 
 class WindowsFileCopier:
-
-    '''
+    """
     Locks all files before starting the copy, ensuring other processes cannot interfere
-    '''
+    """
 
     def __init__(self, delete_all=False, allow_move=False):
         self.delete_all = delete_all
         self.allow_move = allow_move
-        self.path_to_fileid_map : Dict[str, WindowsFileId] = {}
-        self.fileid_to_paths_map: Dict[WindowsFileId, Set[str]] = defaultdict(set)
-        self.path_to_handle_map: Dict[str, 'winutil.Handle'] = {}
-        self.folder_to_handle_map: Dict[str, 'winutil.Handle'] = {}
-        self.folders: List[str] = []
-        self.copy_map: Dict[str, str] = {}
+        self.path_to_fileid_map: dict[str, WindowsFileId] = {}
+        self.fileid_to_paths_map: dict[WindowsFileId, set[str]] = defaultdict(set)
+        self.path_to_handle_map: dict[str, winutil.Handle] = {}
+        self.folder_to_handle_map: dict[str, winutil.Handle] = {}
+        self.folders: list[str] = []
+        self.copy_map: dict[str, str] = {}
 
     def register(self, path: str, dest: str) -> None:
         with suppress(OSError):
             # Ensure the file is not read-only
             winutil.set_file_attributes(make_long_path_useable(path), winutil.FILE_ATTRIBUTE_NORMAL)
-        self.path_to_fileid_map[path] = winutil.get_file_id(make_long_path_useable(path))
+        self.path_to_fileid_map[path] = winutil.get_file_id(make_long_path_useable(path)) or (0, 0, 0)
         self.copy_map[path] = dest
 
     def register_folder(self, path: str) -> None:
         with suppress(OSError):
             # Ensure the folder is not read-only
             winutil.set_file_attributes(make_long_path_useable(path), winutil.FILE_ATTRIBUTE_NORMAL)
-        self.path_to_fileid_map[path] = winutil.get_file_id(make_long_path_useable(path))
+        self.path_to_fileid_map[path] = winutil.get_file_id(make_long_path_useable(path)) or (0, 0, 0)
         self.folders.append(path)
 
-    def _open_file(self, path: str, retry_on_sharing_violation: bool = True, is_folder: bool = False) -> 'winutil.Handle':
+    def _open_file(self, path: str, retry_on_sharing_violation: bool = True, is_folder: bool = False) -> winutil.Handle:
         flags = winutil.FILE_FLAG_BACKUP_SEMANTICS if is_folder else winutil.FILE_FLAG_SEQUENTIAL_SCAN
+        # Do not open symbolic link target to prevent unwanted delete_on_close
+        flags |= getattr(winutil, 'FILE_FLAG_OPEN_REPARSE_POINT', 0x00200000)
         access_flags = winutil.GENERIC_READ
         if self.delete_all:
             access_flags |= winutil.DELETE
@@ -153,7 +155,7 @@ class WindowsFileCopier:
                 except OSError as err:
                     # Ignore dir not empty errors. Should never happen but we
                     # ignore it as the UNIX semantics are to not delete folders
-                    # during __exit__ anyway and we dont want to leak the handle.
+                    # during __exit__ anyway and we don't want to leak the handle.
                     if err.winerror != winutil.ERROR_DIR_NOT_EMPTY:
                         raise
             h.close()
@@ -181,15 +183,15 @@ class WindowsFileCopier:
 
     def rename_all(self) -> None:
         for src_path, dest_path in self.copy_map.items():
-            winutil.move_file(make_long_path_useable(src_path), make_long_path_useable(dest_path))
+            os.replace(make_long_path_useable(src_path), make_long_path_useable(dest_path))
 
 
-def get_copier(delete_all=False, allow_move=False) -> Union[UnixFileCopier, WindowsFileCopier]:
+def get_copier(delete_all=False, allow_move=False) -> UnixFileCopier | WindowsFileCopier:
     return (WindowsFileCopier if iswindows else UnixFileCopier)(delete_all, allow_move)
 
 
-def rename_files(src_to_dest_map: Dict[str, str]) -> None:
-    ' Rename a bunch of files. On Windows all files are locked before renaming so no other process can interfere. '
+def rename_files(src_to_dest_map: dict[str, str]) -> None:
+    "Rename a bunch of files. On Windows all files are locked before renaming so no other process can interfere."
     copier = get_copier(allow_move=True)
     for s, d in src_to_dest_map.items():
         copier.register(s, d)
@@ -197,7 +199,7 @@ def rename_files(src_to_dest_map: Dict[str, str]) -> None:
         copier.rename_all()
 
 
-def copy_files(src_to_dest_map: Dict[str, str], delete_source: bool = False) -> None:
+def copy_files(src_to_dest_map: dict[str, str], delete_source: bool = False) -> None:
     copier = get_copier(delete_source)
     for s, d in src_to_dest_map.items():
         if not samefile(s, d):
@@ -211,9 +213,11 @@ def identity_transform(src_path: str, dest_path: str) -> str:
 
 
 def register_folder_recursively(
-    src: str, copier: Union[UnixFileCopier, WindowsFileCopier], dest_dir: str,
+    src: str,
+    copier: UnixFileCopier | WindowsFileCopier,
+    dest_dir: str,
     transform_destination_filename: Callable[[str, str], str] = identity_transform,
-    read_only: bool = False
+    read_only: bool = False,
 ) -> None:
 
     def dest_from_entry(dirpath: str, x: str) -> str:
@@ -225,7 +229,7 @@ def register_folder_recursively(
         raise e
 
     copier.register_folder(src)
-    for (dirpath, dirnames, filenames) in os.walk(src, onerror=raise_error):
+    for dirpath, dirnames, filenames in os.walk(src, onerror=raise_error):
         for d in dirnames:
             path = os.path.join(dirpath, d)
             dest = dest_from_entry(dirpath, d)
@@ -254,15 +258,16 @@ def windows_check_if_files_in_use(src_folder: str) -> None:
 
 
 def copy_tree(
-    src: str, dest: str,
+    src: str,
+    dest: str,
     transform_destination_filename: Callable[[str, str], str] = identity_transform,
-    delete_source: bool = False
+    delete_source: bool = False,
 ) -> None:
-    '''
+    """
     Copy all files in the tree over. On Windows locks all files before starting the copy to ensure that
     other processes cannot interfere once the copy starts. Uses hardlinks, falling back to actual file copies
     only if hardlinking fails.
-    '''
+    """
     if iswindows:
         if isinstance(src, bytes):
             src = src.decode(filesystem_encoding)

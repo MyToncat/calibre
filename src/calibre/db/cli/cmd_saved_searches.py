@@ -1,13 +1,13 @@
 #!/usr/bin/env python
 # License: GPLv3 Copyright: 2017, Kovid Goyal <kovid at kovidgoyal.net>
 
+from calibre.utils.localization import _
 
 readonly = False
 version = 0  # change this if you change signature of implementation()
 
 from calibre import prints
 from calibre.srv.changes import saved_searches
-from polyglot.builtins import iteritems
 
 
 def implementation(db, notify_changes, action, *args):
@@ -55,7 +55,7 @@ Syntax for removing:
 def main(opts, args, dbctx):
     args = args or ['list']
     if args[0] == 'list':
-        for name, value in iteritems(dbctx.run('saved_searches', 'list')):
+        for name, value in dbctx.run('saved_searches', 'list').items():
             prints(_('Name:'), name)
             prints(_('Search string:'), value)
             print()
@@ -70,11 +70,6 @@ def main(opts, args, dbctx):
         dbctx.run('saved_searches', 'remove', args[1])
         prints(args[1], _('removed'))
     else:
-        raise SystemExit(
-            _(
-                'Error: Action %s not recognized, must be one '
-                'of: (add|remove|list)'
-            ) % args[0]
-        )
+        raise SystemExit(_('Error: Action %s not recognized, must be one of: (add|remove|list)') % args[0])
 
     return 0

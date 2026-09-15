@@ -1,11 +1,10 @@
 #!/usr/bin/env python
 # License: GPLv3 Copyright: 2023, Kovid Goyal <kovid at kovidgoyal.net>
 
-
 from time import monotonic
-from typing import NamedTuple, Tuple
+from typing import NamedTuple
 
-from qt.core import QObject, QTimer
+from qt.core import QObject, QTimer, pyqtSignal
 
 from calibre.db.constants import DATA_FILE_PATTERN
 
@@ -18,13 +17,13 @@ class ExtraFile(NamedTuple):
 
 class ExtraFiles(NamedTuple):
     last_changed_at: float
-    files: Tuple[ExtraFile, ...]
+    files: tuple[ExtraFile, ...]
 
 
 class ExtraFilesWatcher(QObject):
-
+    books_changed = pyqtSignal(object)
     WATCH_FOR = 300  # seconds
-    TICK_INTERVAL = 1 # seconds
+    TICK_INTERVAL = 1  # seconds
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -43,6 +42,7 @@ class ExtraFilesWatcher(QObject):
                 self.watched_book_ids[book_id] = ExtraFiles(monotonic(), self.get_extra_files(book_id))
             except Exception:
                 import traceback
+
                 traceback.print_exc()
                 return
         self.timer.start()
@@ -53,12 +53,12 @@ class ExtraFilesWatcher(QObject):
         if hasattr(ans, 'current_db'):
             return ans
         from calibre.gui2.ui import get_gui
+
         return get_gui()
 
     def get_extra_files(self, book_id):
         db = self.gui.current_db.new_api
-        return tuple(ExtraFile(ef.relpath, ef.stat_result.st_mtime, ef.stat_result.st_size) for
-                     ef in db.list_extra_files(book_id, pattern=DATA_FILE_PATTERN))
+        return tuple(ExtraFile(ef.relpath, ef.stat_result.st_mtime, ef.stat_result.st_size) for ef in db.list_extra_files(book_id, pattern=DATA_FILE_PATTERN))
 
     def check_registered_books(self):
         changed = {}
@@ -86,4 +86,6 @@ class ExtraFilesWatcher(QObject):
 
     def refresh_gui(self, book_ids):
         lv = self.gui.library_view
-        lv.model().refresh_ids(frozenset(book_ids), current_row=lv.currentIndex().row())
+        book_ids = frozenset(book_ids)
+        lv.model().refresh_ids(book_ids, current_row=lv.currentIndex().row())
+        self.books_changed.emit(book_ids)

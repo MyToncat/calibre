@@ -1,26 +1,68 @@
 #!/usr/bin/env python
 
 
-__license__   = 'GPL v3'
+__license__ = 'GPL v3'
 __copyright__ = '2009, Kovid Goyal <kovid@kovidgoyal.net>'
 __docformat__ = 'restructuredtext en'
 
 __all__ = [
-    'pot', 'translations', 'get_translations', 'iso_data', 'iso639', 'iso3166',
-    'build', 'mathjax', 'man_pages',
-    'gui',
+    'bootstrap',
+    'browser_deps',
+    'build',
+    'build_dep',
+    'cacerts',
+    'check',
+    'check_all',
+    'develop',
+    'export_packages',
+    'extdev',
+    'fmt',
+    'get_translations',
+    'git_hooks',
     'git_version',
-    'develop', 'install',
-    'kakasi', 'rapydscript', 'cacerts', 'recent_uas', 'resources',
-    'check', 'test', 'test_rs', 'upgrade_source_code',
-    'sdist', 'bootstrap', 'extdev',
-    'manual', 'tag_release',
-    'upload_to_server',
+    'gui',
+    'hyphenation',
+    'install',
+    'iso639',
+    'iso3166',
+    'iso_data',
+    'liberation_fonts',
+    'linux',
+    'linux64',
+    'linuxarm64',
+    'man_pages',
+    'manual',
+    'mathjax',
+    'osx',
+    'piper_voices',
+    'pot',
+    'publish',
+    'publish_betas',
+    'publish_preview',
+    'rapydscript',
+    'recent_uas',
+    'resources',
+    'reupload',
+    'sdist',
+    'stage1',
+    'stage2',
+    'stage3',
+    'stage4',
+    'stage5',
+    'stylelint',
+    'tag_release',
+    'test',
+    'test_rs',
+    'translations',
+    'type_check',
+    'upgrade_source_code',
+    'upload_demo',
     'upload_installers',
-    'upload_user_manual', 'upload_demo', 'reupload',
-    'stage1', 'stage2', 'stage3', 'stage4', 'stage5', 'publish', 'publish_betas', 'publish_preview',
-    'linux', 'linux64', 'linuxarm64', 'win', 'win64', 'osx', 'build_dep',
-    'export_packages', 'hyphenation', 'liberation_fonts', 'stylelint', 'xwin',
+    'upload_to_server',
+    'upload_user_manual',
+    'win',
+    'win64',
+    'xwin',
 ]
 
 from setup.installers import OSX, BuildDep, ExportPackages, ExtDev, Linux, Linux64, LinuxArm64, Win, Win64
@@ -32,8 +74,8 @@ extdev = ExtDev()
 build_dep = BuildDep()
 export_packages = ExportPackages()
 
-from setup.translations import ISO639, ISO3166, POT, GetTranslations, Translations
 from setup.iso_codes import iso_data
+from setup.translations import ISO639, ISO3166, POT, GetTranslations, Translations
 
 pot = POT()
 translations = Translations()
@@ -57,9 +99,17 @@ from setup.hyphenation import Hyphenation
 
 hyphenation = Hyphenation()
 
+from setup.piper import PiperVoices
+
+piper_voices = PiperVoices()
+
 from setup.liberation import LiberationFonts
 
 liberation_fonts = LiberationFonts()
+
+from setup.git_hooks import GitHooks
+
+git_hooks = GitHooks()
 
 from setup.git_version import GitVersion
 
@@ -72,13 +122,18 @@ install = Install()
 sdist = Sdist()
 bootstrap = Bootstrap()
 
+from setup.browser_deps import BrowserDeps
+
+browser_deps = BrowserDeps()
+
 from setup.gui import GUI
 
 gui = GUI()
 
-from setup.check import Check, UpgradeSourceCode
+from setup.check import Check, CheckAll, UpgradeSourceCode
 
 check = Check()
+check_all = CheckAll()
 upgrade_source_code = UpgradeSourceCode()
 
 from setup.test import Test, TestRS
@@ -86,10 +141,18 @@ from setup.test import Test, TestRS
 test = Test()
 test_rs = TestRS()
 
-from setup.resources import CACerts, Kakasi, RapydScript, RecentUAs, Resources
+from setup.type_check import TypeCheck
+
+type_check = TypeCheck()
+
+
+from setup.fmt import AutoFormat
+
+fmt = AutoFormat()
+
+from setup.resources import CACerts, RapydScript, RecentUAs, Resources
 
 resources = Resources()
-kakasi = Kakasi()
 cacerts = CACerts()
 recent_uas = RecentUAs()
 rapydscript = RapydScript()

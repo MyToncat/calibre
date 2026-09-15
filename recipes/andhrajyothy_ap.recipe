@@ -5,7 +5,7 @@ from datetime import date
 from calibre.web.feeds.news import BasicNewsRecipe
 
 # figure out your local edition id from the log of this recipe
-edi_id = 182 # NTR VIJAYAWADA - 182
+edi_id = 182  # NTR VIJAYAWADA - 182
 
 today = date.today().strftime('%d/%m/%Y')
 
@@ -17,6 +17,7 @@ dt = date(year, month, day)
 today = today.replace('/', '%2F')
 
 index = 'https://epaper.andhrajyothy.com'
+
 
 class andhra(BasicNewsRecipe):
     title = 'ఆంధ్రజ్యోతి - ఆంధ్రప్రదేశ్'
@@ -40,17 +41,14 @@ class andhra(BasicNewsRecipe):
 
     def parse_index(self):
 
-        self.log(
-            '\n***\nif this recipe fails, report it on: '
-            'https://www.mobileread.com/forums/forumdisplay.php?f=228\n***\n'
-        )
+        self.log('\n***\nif this recipe fails, report it on: https://www.mobileread.com/forums/forumdisplay.php?f=228\n***\n')
 
         get_edition = index + '/Home/GetEditionsHierarchy'
         edi_data = json.loads(self.index_to_soup(get_edition, raw=True))
         self.log('## For your local edition id, modify this recipe to match your edi_id from the cities below\n')
         for edi in edi_data:
             if edi['org_location'] in {'Magazines', 'Navya Daily'}:
-                    continue
+                continue
             self.log(edi['org_location'])
             cities = []
             for edi_loc in edi['editionlocation']:
@@ -75,8 +73,8 @@ class andhra(BasicNewsRecipe):
                 url = str(snaps['OrgId'])
                 if snaps['ObjectType'] == 4:
                     continue
-                feeds_dict[section].append({"title": '', "url": url})
-        return [(section, articles) for section, articles in feeds_dict.items()]
+                feeds_dict[section].append({'title': '', 'url': url})
+        return list(feeds_dict.items())
 
     def preprocess_raw_html(self, raw, *a):
         data = json.loads(raw)
@@ -106,7 +104,7 @@ class andhra(BasicNewsRecipe):
         article.url = '***'
         h1 = soup.find('h1')
         h4 = soup.find('h4')
-        body = soup.find(attrs={'class':'body'})
+        body = soup.find(attrs={'class': 'body'})
         if h4:
             article.summary = self.tag_to_string(h4)
             article.text_summary = article.summary
